@@ -316,48 +316,89 @@ def candidate_page():
     render_logo()
     change_password_ui(user['email'])
     
+    # 讀取履歷資料庫
     df = sys.get_df("resumes")
-    my_resume = df[df['email'] == user['email']].iloc[0]
+    
+    # --- [關鍵修正] 加入防呆檢查 ---
+    # 1. 檢查資料庫是否讀取成功
+    if df.empty or 'email' not in df.columns:
+        st.error("⚠️ 系統錯誤：無法讀取履歷資料庫 (Resumes table empty or invalid)。")
+        return
+
+    # 2. 篩選該使用者的資料
+    my_resume_df = df[df['email'].astype(str).str.strip().str.lower() == str(user['email']).strip().lower()]
+
+    # 3. 如果找不到資料，顯示錯誤訊息並停止，而不是讓程式崩潰
+    if my_resume_df.empty:
+        st.error(f"⚠️ 找不到您的履歷檔案 ({user['email']})。")
+        st.info("可能原因：您的帳號已建立，但履歷表尚未初始化。請聯繫 HR 重新發送邀請，或檢查資料庫。")
+        return
+
+    # 4. 取得資料 (現在確認有資料了，可以安全讀取)
+    my_resume = my_resume_df.iloc[0]
+    
     status = my_resume['status']
     r_type = my_resume.get('resume_type', 'HQ') 
 
     if status == "Approved":
-        st.balloons(); st.success("已錄取"); return
+        st.balloons(); st.success("🎉 恭喜！您的履歷已審核通過。"); 
+        if my_resume['hr_comment']: st.info(f"HR 訊息: {my_resume['hr_comment']}")
+        return
     elif status == "Submitted":
-        st.info("已送出審核"); return
+        st.info("⏳ 履歷已送出，正在等待 HR 審核中，目前無法修改。"); return
     elif status == "Returned":
-        st.error(f"被退回：{my_resume['hr_comment']}")
+        st.error(f"⚠️ 您的履歷被退回。原因：{my_resume['hr_comment']}")
 
     with st.form("resume"):
         st.caption(f"履歷版本：{'🏢 總公司內勤' if r_type == 'HQ' else '🏪 分公司門市'}")
+        
         c1, c2 = st.columns(2)
         n_cn = c1.text_input("中文姓名", value=my_resume['name_cn'])
         n_en = c2.text_input("英文姓名", value=my_resume['name_en'])
         c3, c4 = st.columns(2)
         phone = c3.text_input("電話", value=my_resume['phone'])
-        dob_val = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
+        
+        # 日期防呆
+        try: dob_val = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
+        except: dob_val = date(1995,1,1)
         dob = c4.date_input("生日", value=dob_val)
+        
         addr = st.text_input("地址", value=my_resume['address'])
         
         st.subheader("學經歷")
         e1, e2, e3 = st.columns(3)
         esch = e1.text_input("學校", value=my_resume['education_school'])
         emaj = e2.text_input("科系", value=my_resume['education_major'])
-        edeg = e3.selectbox("學位", ["學士", "碩士", "博士"], index=0)
+        # 確保 index 合法
+        deg_opts = ["學士", "碩士", "博士", "其他"]
+        curr_deg = my_resume['education_degree']
+        deg_idx = deg_opts.index(curr_deg) if curr_deg in deg_opts else 0
+        edeg = e3.selectbox("學位", deg_opts, index=deg_idx)
         
         w1, w2, w3 = st.columns([2,2,1])
         eco = w1.text_input("前公司", value=my_resume['experience_company'])
         eti = w2.text_input("職稱", value=my_resume['experience_title'])
-        eyr = w3.number_input("年資", value=float(my_resume['experience_years']) if my_resume['experience_years'] else 0.0)
+        # 數值防呆
+        try: eyr_val = float(my_resume['experience_years'])
+        except: eyr_val = 0.0
+        eyr = w3.number_input("年資", value=eyr_val)
 
         loc_pref = []
         shift_yn = ""
         if r_type == "Branch":
             st.markdown("---")
             st.subheader("🏪 分公司專屬調查 (必填)")
-            loc_pref = st.multiselect("希望工作地點", ["忠孝", "館前", "士林", "公館", "基隆", "羅東", "其他"], default=str(my_resume.get('branch_location', '')).split(',') if my_resume.get('branch_location') else [])
+            curr_loc = str(my_resume.get('branch_location', ''))
+            default_loc = curr_loc.split(',') if curr_loc else []
+            # 過濾掉不在選項內的舊資料以免報錯
+            valid_locs = ["忠孝", "館前", "士林", "公館", "基隆", "羅東", "其他"]
+            default_loc = [x for x in default_loc if x in valid_locs]
+            
+            loc_pref = st.multiselect("希望工作地點", valid_locs, default=default_loc)
+            
+            shift_idx = 0 if my_resume.get('shift_avail')=="是" else 1
             c_shift1, c_shift2 = st.columns(2)
-            shift_yn = c_shift1.radio("是否可配合輪班？", ["是", "否"], index=0 if my_resume.get('shift_avail')=="是" else 1)
+            shift_yn = c_shift1.radio("是否可配合輪班？", ["是", "否"], index=shift_idx)
             st.markdown("---")
 
         st.subheader("技能與自傳")
@@ -386,12 +427,12 @@ def candidate_page():
                 hr = user.get('creator', '')
                 if hr: send_email(hr, f"【履歷送審】{n_cn} 已提交", "請登入系統審閱")
                 st.success("已送出"); time.sleep(1); st.rerun()
-
 # --- Entry ---
 if 'user' not in st.session_state: st.session_state.user = None
 if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] == 'admin': admin_page()
     else: candidate_page()
+
 
 
