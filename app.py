@@ -36,10 +36,30 @@ class ResumeDB:
             st.stop()
 
     def get_df(self, table_name):
-        ws = self.ws_users if table_name == "users" else self.ws_resumes
+        defaults = {
+            "users": ["email", "password", "name", "role", "creator_email", "created_at"],
+            "resumes": ["email", "status", "name_cn", "name_en", "phone", "address", "dob", "education_school", "education_major", "education_degree", "experience_company", "experience_title", "experience_years", "skills", "self_intro", "hr_comment", "interview_date", "resume_type", "branch_location", "shift_avail"],
+            "system_settings": ["key", "value"]
+        }
+        
+        ws = self.ws_users if table_name == "users" else (self.ws_resumes if table_name == "resumes" else self.ws_settings)
+        
         try:
-            return pd.DataFrame(ws.get_all_records())
-        except: return pd.DataFrame()
+            data = ws.get_all_records()
+            df = pd.DataFrame(data)
+            
+            # [新增] 強制清洗欄位名稱：去除前後空白、轉小寫
+            df.columns = df.columns.astype(str).str.strip().str.lower()
+
+            # 檢查關鍵欄位是否存在
+            check_col = defaults[table_name][0]
+            
+            if df.empty or check_col not in df.columns:
+                return pd.DataFrame(columns=defaults[table_name])
+            
+            return df
+        except: 
+            return pd.DataFrame(columns=defaults.get(table_name, []))
 
     def verify_login(self, email, password):
         try:
@@ -371,3 +391,4 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] == 'admin': admin_page()
     else: candidate_page()
+
