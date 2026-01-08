@@ -35,6 +35,7 @@ class ResumeDB:
             st.error(f"資料庫連線失敗: {e}")
             st.stop()
 
+    # --- [修正版] 讀取資料函式 (加入欄位清洗功能) ---
     def get_df(self, table_name):
         defaults = {
             "users": ["email", "password", "name", "role", "creator_email", "created_at"],
@@ -48,19 +49,20 @@ class ResumeDB:
             data = ws.get_all_records()
             df = pd.DataFrame(data)
             
-            # [新增] 強制清洗欄位名稱：去除前後空白、轉小寫
-            df.columns = df.columns.astype(str).str.strip().str.lower()
+            # 【關鍵修正】：如果資料表不是空的，強制把欄位名稱轉為「小寫」並「去除空白」
+            if not df.empty:
+                df.columns = df.columns.astype(str).str.strip().str.lower()
 
             # 檢查關鍵欄位是否存在
             check_col = defaults[table_name][0]
             
-            if df.empty or check_col not in df.columns:
+            # 如果欄位還是對不上，回傳空表
+            if check_col not in df.columns:
                 return pd.DataFrame(columns=defaults[table_name])
             
             return df
         except: 
             return pd.DataFrame(columns=defaults.get(table_name, []))
-
     def verify_login(self, email, password):
         try:
             cell = self.ws_users.find(email, in_column=1)
@@ -391,4 +393,5 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] == 'admin': admin_page()
     else: candidate_page()
+
 
