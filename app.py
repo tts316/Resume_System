@@ -35,31 +35,36 @@ class ResumeDB:
             st.error(f"資料庫連線失敗: {e}")
             st.stop()
 
+    # [修正版] 更強壯的讀取函式 (改用 get_all_values)
     def get_df(self, table_name):
-        defaults = {
-            "users": ["email", "password", "name", "role", "creator_email", "created_at"],
-            "resumes": ["email", "status", "name_cn", "name_en", "phone", "address", "dob", "education_school", "education_major", "education_degree", "experience_company", "experience_title", "experience_years", "skills", "self_intro", "hr_comment", "interview_date", "resume_type", "branch_location", "shift_avail"],
-            "system_settings": ["key", "value"]
-        }
-        
         ws = self.ws_users if table_name == "users" else (self.ws_resumes if table_name == "resumes" else self.ws_settings)
         
         try:
-            data = ws.get_all_records()
-            df = pd.DataFrame(data)
+            # 改用 get_all_values (讀取原始資料列表)
+            data = ws.get_all_values()
             
-            if not df.empty:
-                df.columns = df.columns.astype(str).str.strip().str.lower()
+            # 如果完全沒資料，或只有標題列
+            if len(data) < 2:
+                # 嘗試回傳空 DataFrame，但保留預設標題 (避免後續報錯)
+                if len(data) == 1:
+                     df = pd.DataFrame(columns=data[0])
+                     # 清洗標題
+                     df.columns = df.columns.astype(str).str.strip().str.lower()
+                     return df
+                return pd.DataFrame()
+
+            # 將第一列設為標題
+            headers = data.pop(0)
+            df = pd.DataFrame(data, columns=headers)
             
-            check_col = defaults[table_name][0]
-            
-            if df.empty or check_col not in df.columns:
-                return pd.DataFrame(columns=defaults[table_name])
+            # 強制清洗標題 (轉小寫、去空白)
+            df.columns = df.columns.astype(str).str.strip().str.lower()
             
             return df
-        except: 
-            return pd.DataFrame(columns=defaults.get(table_name, []))
-
+        except Exception as e:
+            # print(f"讀取錯誤: {e}") # 除錯用
+            return pd.DataFrame()
+            
     def verify_login(self, email, password):
         try:
             df = self.get_df("users")
@@ -451,3 +456,4 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] == 'admin': admin_page()
     else: candidate_page()
+
