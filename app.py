@@ -12,7 +12,7 @@ from gspread.exceptions import APIError
 # --- 1. 系統設定 ---
 st.set_page_config(page_title="聯成電腦 - 人才招募系統", layout="wide", page_icon="📝")
 
-# Logo URL
+# Logo URL (預設)
 LOGO_URL = "https://www.lccnet.com.tw/img/logo.png"
 
 # --- 2. 資料庫核心 ---
@@ -35,7 +35,6 @@ class ResumeDB:
             st.error(f"資料庫連線失敗: {e}")
             st.stop()
 
-    # --- [修正版] 讀取資料函式 (加入欄位清洗功能) ---
     def get_df(self, table_name):
         defaults = {
             "users": ["email", "password", "name", "role", "creator_email", "created_at"],
@@ -49,37 +48,50 @@ class ResumeDB:
             data = ws.get_all_records()
             df = pd.DataFrame(data)
             
-            # 【關鍵修正】：如果資料表不是空的，強制把欄位名稱轉為「小寫」並「去除空白」
             if not df.empty:
                 df.columns = df.columns.astype(str).str.strip().str.lower()
-
-            # 檢查關鍵欄位是否存在
+            
             check_col = defaults[table_name][0]
             
-            # 如果欄位還是對不上，回傳空表
-            if check_col not in df.columns:
+            if df.empty or check_col not in df.columns:
                 return pd.DataFrame(columns=defaults[table_name])
             
             return df
         except: 
             return pd.DataFrame(columns=defaults.get(table_name, []))
+
     def verify_login(self, email, password):
         try:
-            cell = self.ws_users.find(email, in_column=1)
-            if cell:
-                row = self.ws_users.row_values(cell.row)
-                if str(row[1]) == str(password):
-                    return {"email": row[0], "name": row[2], "role": row[3], "creator": row[4] if len(row)>4 else ""}
+            df = self.get_df("users")
+            if df.empty: return None
+            
+            user = df[df['email'].astype(str).str.strip().str.lower() == str(email).strip().lower()]
+            if not user.empty:
+                row = user.iloc[0]
+                if str(row['password']) == str(password):
+                    return {
+                        "email": row['email'], 
+                        "name": row['name'], 
+                        "role": row['role'], 
+                        "creator": row.get('creator_email', '')
+                    }
             return None
         except: return None
 
     def create_candidate(self, hr_email, candidate_email, candidate_name, r_type):
         try:
-            if self.ws_users.find(candidate_email, in_column=1):
+            df = self.get_df("users")
+            if not df.empty and str(candidate_email) in df['email'].astype(str).values:
                 return False, "此 Email 已存在"
+            
             self.ws_users.append_row([candidate_email, candidate_email, candidate_name, "candidate", hr_email, str(date.today())])
-            row_data = [candidate_email, "New", candidate_name] + [""] * 15
-            row_data.append(r_type); row_data.append(""); row_data.append("")
+            
+            row_data = [candidate_email, "New", candidate_name] + [""] * 14
+            row_data.append("") 
+            row_data.append(r_type)
+            row_data.append("") 
+            row_data.append("") 
+            
             self.ws_resumes.append_row(row_data)
             return True, "建立成功"
         except Exception as e: return False, str(e)
@@ -98,18 +110,28 @@ class ResumeDB:
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
                 row = cell.row
-                updates = [
-                    (2, status), (3, data_dict.get('name_cn', '')), (4, data_dict.get('name_en', '')),
-                    (5, data_dict.get('phone', '')), (6, data_dict.get('address', '')), (7, str(data_dict.get('dob', ''))),
-                    (8, data_dict.get('edu_school', '')), (9, data_dict.get('edu_major', '')), (10, data_dict.get('edu_degree', '')),
-                    (11, data_dict.get('exp_co', '')), (12, data_dict.get('exp_title', '')), (13, str(data_dict.get('exp_years', 0))),
-                    (14, data_dict.get('skills', '')), (15, data_dict.get('self_intro', ''))
-                ]
-                for col, val in updates: self.ws_resumes.update_cell(row, col, val)
-                if 'branch_location' in data_dict: self.ws_resumes.update_cell(row, 20, data_dict['branch_location'])
-                if 'shift_avail' in data_dict: self.ws_resumes.update_cell(row, 21, data_dict['shift_avail'])
+                self.ws_resumes.update_cell(row, 2, status)
+                self.ws_resumes.update_cell(row, 3, data_dict.get('name_cn', ''))
+                self.ws_resumes.update_cell(row, 4, data_dict.get('name_en', ''))
+                self.ws_resumes.update_cell(row, 5, data_dict.get('phone', ''))
+                self.ws_resumes.update_cell(row, 6, data_dict.get('address', ''))
+                self.ws_resumes.update_cell(row, 7, str(data_dict.get('dob', '')))
+                self.ws_resumes.update_cell(row, 8, data_dict.get('edu_school', ''))
+                self.ws_resumes.update_cell(row, 9, data_dict.get('edu_major', ''))
+                self.ws_resumes.update_cell(row, 10, data_dict.get('edu_degree', ''))
+                self.ws_resumes.update_cell(row, 11, data_dict.get('exp_co', ''))
+                self.ws_resumes.update_cell(row, 12, data_dict.get('exp_title', ''))
+                self.ws_resumes.update_cell(row, 13, str(data_dict.get('exp_years', 0)))
+                self.ws_resumes.update_cell(row, 14, data_dict.get('skills', ''))
+                self.ws_resumes.update_cell(row, 15, data_dict.get('self_intro', ''))
+                
+                if 'branch_location' in data_dict:
+                    self.ws_resumes.update_cell(row, 20, data_dict['branch_location'])
+                if 'shift_avail' in data_dict:
+                    self.ws_resumes.update_cell(row, 21, data_dict['shift_avail'])
+
                 return True, "儲存成功"
-            return False, "找不到資料"
+            return False, "找不到資料庫紀錄"
         except Exception as e: return False, str(e)
 
     def hr_update_status(self, email, status, comment="", interview_date=""):
@@ -146,18 +168,16 @@ def get_db(): return ResumeDB()
 try: sys = get_db()
 except: st.error("連線失敗，請檢查 secrets.toml"); st.stop()
 
-# --- Email 服務 (從 Secrets 讀取) ---
+# --- Email ---
 def send_email(to_email, subject, body):
-    # 讀取 Secrets
     try:
         email_config = st.secrets["email"]
-        smtp_server = "smtp.gmail.com"
-        smtp_port = 587
         sender_email = email_config["sender_email"]
         sender_password = email_config["sender_password"]
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 587
     except:
-        st.warning("⚠️ 尚未設定 Email Secrets，目前為模擬發送模式。")
-        print(f"【模擬寄信】To: {to_email}")
+        st.warning("⚠️ 模擬發信模式 (未設定 Secrets)")
         return True
 
     try:
@@ -165,7 +185,6 @@ def send_email(to_email, subject, body):
         msg['Subject'] = subject
         msg['From'] = sender_email
         msg['To'] = to_email
-        
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
         server.login(sender_email, sender_password)
@@ -173,30 +192,50 @@ def send_email(to_email, subject, body):
         server.quit()
         return True
     except Exception as e:
-        st.error(f"寄信失敗: {e}")
         return False
 
-# --- UI ---
-def change_password_ui(email):
-    with st.expander("🔑 修改密碼"):
-        p1 = st.text_input("新密碼", type="password", key="p1")
-        p2 = st.text_input("確認新密碼", type="password", key="p2")
-        if st.button("修改"):
-            if p1==p2 and p1:
-                if sys.change_password(email, p1): st.success("成功")
-                else: st.error("失敗")
-            else: st.error("密碼不一致")
+# --- UI Components ---
+def render_sidebar_info(user):
+    """
+    統一的側邊欄資訊，包含 Logo、使用者資訊、登出按鈕、修改密碼
+    """
+    with st.sidebar:
+        # 1. Logo
+        try:
+            raw_logo = sys.get_logo()
+            logo = str(raw_logo).strip() if raw_logo else None
+            if logo and len(logo) > 10:
+                if logo.startswith("http"): st.image(logo, use_container_width=True)
+                elif logo.startswith("data:image"): st.image(logo, use_container_width=True)
+                else: st.image(f"data:image/png;base64,{logo}", use_container_width=True)
+            else: st.image(LOGO_URL, use_container_width=True)
+        except: st.image(LOGO_URL, use_container_width=True)
+        
+        st.divider()
 
-def render_logo():
-    try:
-        raw_logo = sys.get_logo()
-        logo = str(raw_logo).strip() if raw_logo else None
-        if logo and len(logo) > 10:
-            if logo.startswith("http"): st.sidebar.image(logo, use_container_width=True)
-            elif logo.startswith("data:image"): st.sidebar.image(logo, use_container_width=True)
-            else: st.sidebar.image(f"data:image/png;base64,{logo}", use_container_width=True)
-        else: st.sidebar.image(LOGO_URL, use_container_width=True)
-    except: st.sidebar.image(LOGO_URL, use_container_width=True)
+        # 2. 使用者資訊
+        role_label = "管理員 (HR/PM)" if user['role'] == 'admin' else "面試者"
+        st.write(f"👋 **{user['name']}**")
+        st.caption(f"身分: {role_label}")
+        st.caption(f"帳號: {user['email']}")
+
+        # 3. 登出按鈕
+        if st.button("🚪 登出", type="primary", use_container_width=True):
+            st.session_state.user = None
+            st.rerun()
+
+        st.divider()
+
+        # 4. 修改密碼
+        with st.expander("🔑 修改密碼"):
+            p1 = st.text_input("新密碼", type="password", key="p1")
+            p2 = st.text_input("確認新密碼", type="password", key="p2")
+            if st.button("確認修改"):
+                if p1==p2 and p1:
+                    if sys.change_password(user['email'], p1): 
+                        st.success("密碼已更新，下次請用新密碼登入")
+                    else: st.error("失敗")
+                else: st.error("密碼不一致")
 
 # --- Pages ---
 
@@ -211,14 +250,14 @@ def login_page():
             if user:
                 st.session_state.user = user
                 st.rerun()
-            else: st.error("錯誤")
+            else: st.error("帳號或密碼錯誤")
     with c2: st.info("預設密碼通常為您的 Email")
 
 def admin_page():
     user = st.session_state.user
-    st.header(f"👨‍💼 管理後台 - {user['name']}")
-    render_logo()
-    change_password_ui(user['email'])
+    render_sidebar_info(user) # 呼叫側邊欄元件
+    
+    st.header(f"👨‍💼 管理後台")
     
     tab1, tab2, tab3 = st.tabs(["📧 發送邀請", "📋 履歷審核", "⚙️ 設定"])
 
@@ -233,16 +272,14 @@ def admin_page():
                 if c_name and c_email:
                     type_code = "Branch" if "分公司" in r_type else "HQ"
                     
-                    # 檢查 Email 是否已存在
                     df_users = sys.get_df("users")
-                    if not df_users.empty and c_email in df_users['email'].values:
+                    if not df_users.empty and str(c_email) in df_users['email'].astype(str).values:
                         st.error("此 Email 已經存在，請勿重複發送。")
                     else:
                         succ, msg = sys.create_candidate(user['email'], c_email, c_name, type_code)
                         if succ:
-                            # 讀取 Secrets 中的 APP 網址
                             try: app_link = st.secrets["email"]["app_url"]
-                            except: app_link = "https://share.streamlit.io/" # 預設值
+                            except: app_link = "https://share.streamlit.io/" 
 
                             subj = f"【聯成電腦面試邀請】{c_name} 您好"
                             body = f"""{c_name} 您好，
@@ -294,7 +331,7 @@ def admin_page():
                     c_ok, c_no = st.columns(2)
                     if c_ok.button("✅ 核准"):
                         sys.hr_update_status(sel_email, "Approved", cmt, date.today())
-                        send_email(sel_email, "【聯成電腦】履歷審核通過", f"恭喜，您的履歷已通過審核。\nHR 留言：{cmt}\n我們將盡快聯繫您安排面試時間。")
+                        send_email(sel_email, "【聯成電腦】履歷審核通過", f"恭喜，您的履歷已通過審核。\nHR 留言：{cmt}")
                         st.success("OK"); time.sleep(1); st.rerun()
                     if c_no.button("↩️ 退件"):
                         sys.hr_update_status(sel_email, "Returned", cmt)
@@ -312,56 +349,44 @@ def admin_page():
 
 def candidate_page():
     user = st.session_state.user
-    st.header(f"📝 履歷填寫 - {user['name']}")
-    render_logo()
-    change_password_ui(user['email'])
+    render_sidebar_info(user) # 呼叫側邊欄元件
     
-    # 讀取履歷資料庫
+    st.header(f"📝 履歷填寫")
+    
     df = sys.get_df("resumes")
-    
-    # --- [關鍵修正] 加入防呆檢查 ---
-    # 1. 檢查資料庫是否讀取成功
     if df.empty or 'email' not in df.columns:
-        st.error("⚠️ 系統錯誤：無法讀取履歷資料庫 (Resumes table empty or invalid)。")
+        st.error("系統資料異常，請聯繫 HR (Resumes Table Empty)")
         return
 
-    # 2. 篩選該使用者的資料
     my_resume_df = df[df['email'].astype(str).str.strip().str.lower() == str(user['email']).strip().lower()]
 
-    # 3. 如果找不到資料，顯示錯誤訊息並停止，而不是讓程式崩潰
     if my_resume_df.empty:
         st.error(f"⚠️ 找不到您的履歷檔案 ({user['email']})。")
-        st.info("可能原因：您的帳號已建立，但履歷表尚未初始化。請聯繫 HR 重新發送邀請，或檢查資料庫。")
+        st.info("可能是您的資料已被移除，請聯繫 HR 重新發送邀請。")
         return
 
-    # 4. 取得資料 (現在確認有資料了，可以安全讀取)
     my_resume = my_resume_df.iloc[0]
-    
     status = my_resume['status']
     r_type = my_resume.get('resume_type', 'HQ') 
 
     if status == "Approved":
-        st.balloons(); st.success("🎉 恭喜！您的履歷已審核通過。"); 
-        if my_resume['hr_comment']: st.info(f"HR 訊息: {my_resume['hr_comment']}")
-        return
+        st.balloons(); st.success("已錄取"); return
     elif status == "Submitted":
-        st.info("⏳ 履歷已送出，正在等待 HR 審核中，目前無法修改。"); return
+        st.info("已送出審核"); return
     elif status == "Returned":
-        st.error(f"⚠️ 您的履歷被退回。原因：{my_resume['hr_comment']}")
+        st.error(f"被退回：{my_resume['hr_comment']}")
 
     with st.form("resume"):
         st.caption(f"履歷版本：{'🏢 總公司內勤' if r_type == 'HQ' else '🏪 分公司門市'}")
-        
         c1, c2 = st.columns(2)
         n_cn = c1.text_input("中文姓名", value=my_resume['name_cn'])
         n_en = c2.text_input("英文姓名", value=my_resume['name_en'])
         c3, c4 = st.columns(2)
         phone = c3.text_input("電話", value=my_resume['phone'])
         
-        # 日期防呆
-        try: dob_val = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
-        except: dob_val = date(1995,1,1)
-        dob = c4.date_input("生日", value=dob_val)
+        try: dval = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
+        except: dval = date(1995,1,1)
+        dob = c4.date_input("生日", value=dval)
         
         addr = st.text_input("地址", value=my_resume['address'])
         
@@ -369,19 +394,14 @@ def candidate_page():
         e1, e2, e3 = st.columns(3)
         esch = e1.text_input("學校", value=my_resume['education_school'])
         emaj = e2.text_input("科系", value=my_resume['education_major'])
-        # 確保 index 合法
-        deg_opts = ["學士", "碩士", "博士", "其他"]
-        curr_deg = my_resume['education_degree']
-        deg_idx = deg_opts.index(curr_deg) if curr_deg in deg_opts else 0
-        edeg = e3.selectbox("學位", deg_opts, index=deg_idx)
+        edeg = e3.selectbox("學位", ["學士", "碩士", "博士"], index=0)
         
         w1, w2, w3 = st.columns([2,2,1])
         eco = w1.text_input("前公司", value=my_resume['experience_company'])
         eti = w2.text_input("職稱", value=my_resume['experience_title'])
-        # 數值防呆
-        try: eyr_val = float(my_resume['experience_years'])
-        except: eyr_val = 0.0
-        eyr = w3.number_input("年資", value=eyr_val)
+        try: y_val = float(my_resume['experience_years'])
+        except: y_val = 0.0
+        eyr = w3.number_input("年資", value=y_val)
 
         loc_pref = []
         shift_yn = ""
@@ -389,16 +409,13 @@ def candidate_page():
             st.markdown("---")
             st.subheader("🏪 分公司專屬調查 (必填)")
             curr_loc = str(my_resume.get('branch_location', ''))
-            default_loc = curr_loc.split(',') if curr_loc else []
-            # 過濾掉不在選項內的舊資料以免報錯
-            valid_locs = ["忠孝", "館前", "士林", "公館", "基隆", "羅東", "其他"]
-            default_loc = [x for x in default_loc if x in valid_locs]
+            d_loc = curr_loc.split(',') if curr_loc else []
+            valid_opts = ["忠孝", "館前", "士林", "公館", "基隆", "羅東", "其他"]
+            d_loc = [x for x in d_loc if x in valid_opts]
             
-            loc_pref = st.multiselect("希望工作地點", valid_locs, default=default_loc)
-            
-            shift_idx = 0 if my_resume.get('shift_avail')=="是" else 1
+            loc_pref = st.multiselect("希望工作地點", valid_opts, default=d_loc)
             c_shift1, c_shift2 = st.columns(2)
-            shift_yn = c_shift1.radio("是否可配合輪班？", ["是", "否"], index=shift_idx)
+            shift_yn = c_shift1.radio("是否可配合輪班？", ["是", "否"], index=0 if my_resume.get('shift_avail')=="是" else 1)
             st.markdown("---")
 
         st.subheader("技能與自傳")
@@ -427,12 +444,10 @@ def candidate_page():
                 hr = user.get('creator', '')
                 if hr: send_email(hr, f"【履歷送審】{n_cn} 已提交", "請登入系統審閱")
                 st.success("已送出"); time.sleep(1); st.rerun()
+
 # --- Entry ---
 if 'user' not in st.session_state: st.session_state.user = None
 if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] == 'admin': admin_page()
     else: candidate_page()
-
-
-
