@@ -18,7 +18,7 @@ SMTP_PORT = 587
 SENDER_EMAIL = ""      # 請填入您的 Gmail
 SENDER_PASSWORD = ""   # 請填入應用程式密碼
 
-# Logo URL (可替換為真實連結)
+# Logo URL (預設圖片)
 LOGO_URL = "https://www.lccnet.com.tw/img/logo.png"
 
 # --- 2. 資料庫核心 ---
@@ -57,7 +57,6 @@ class ResumeDB:
             return None
         except: return None
 
-    # [更新] 建立帳號時，寫入履歷類型
     def create_candidate(self, hr_email, candidate_email, candidate_name, r_type):
         try:
             if self.ws_users.find(candidate_email, in_column=1):
@@ -66,15 +65,11 @@ class ResumeDB:
             # 1. 建立 User
             self.ws_users.append_row([candidate_email, candidate_email, candidate_name, "candidate", hr_email, str(date.today())])
             
-            # 2. 建立 Resume (包含類型)
-            # 欄位: email, status, name_cn ... (中間空) ... interview_date, resume_type, branch_loc, shift
-            # 我們先填入關鍵欄位，其他留空
-            # A=1, B=2, ... R=18, S=19(type), T=20(loc), U=21(shift)
-            # 簡單做法：先 append 一個夠長的 list
-            row_data = [candidate_email, "New", candidate_name] + [""] * 15 # 補空值到 R
-            row_data.append(r_type) # S欄: resume_type
-            row_data.append("")     # T欄
-            row_data.append("")     # U欄
+            # 2. 建立 Resume
+            row_data = [candidate_email, "New", candidate_name] + [""] * 15
+            row_data.append(r_type)
+            row_data.append("")
+            row_data.append("")
             
             self.ws_resumes.append_row(row_data)
             return True, "建立成功"
@@ -94,9 +89,6 @@ class ResumeDB:
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
                 row = cell.row
-                # 批次更新 (定義欄位 mapping)
-                # A=1, B=2(Status), C=3(Name) ...
-                # 這裡使用簡單的 cell update，建議實務上用 batch_update
                 self.ws_resumes.update_cell(row, 2, status)
                 self.ws_resumes.update_cell(row, 3, data_dict.get('name_cn', ''))
                 self.ws_resumes.update_cell(row, 4, data_dict.get('name_en', ''))
@@ -112,8 +104,6 @@ class ResumeDB:
                 self.ws_resumes.update_cell(row, 14, data_dict.get('skills', ''))
                 self.ws_resumes.update_cell(row, 15, data_dict.get('self_intro', ''))
                 
-                # [新增] 分公司欄位
-                # T=20 (Location), U=21 (Shift)
                 if 'branch_location' in data_dict:
                     self.ws_resumes.update_cell(row, 20, data_dict['branch_location'])
                 if 'shift_avail' in data_dict:
@@ -129,8 +119,8 @@ class ResumeDB:
             if cell:
                 row = cell.row
                 self.ws_resumes.update_cell(row, 2, status)
-                self.ws_resumes.update_cell(row, 16, comment) # P欄
-                self.ws_resumes.update_cell(row, 17, str(interview_date)) # Q欄
+                self.ws_resumes.update_cell(row, 16, comment)
+                self.ws_resumes.update_cell(row, 17, str(interview_date))
                 return True, "更新成功"
             return False, "錯誤"
         except Exception as e: return False, str(e)
@@ -144,7 +134,9 @@ class ResumeDB:
 
     def update_logo(self, base64_str):
         try:
-            cell = self.ws_settings.find("logo", in_column=1)
+            try: cell = self.ws_settings.find("logo", in_column=1)
+            except: time.sleep(1); cell = self.ws_settings.find("logo", in_column=1)
+            
             if cell: self.ws_settings.update_cell(cell.row, 2, base64_str)
             else: self.ws_settings.append_row(["logo", base64_str])
             return True
@@ -182,13 +174,27 @@ def change_password_ui(email):
                 else: st.error("失敗")
             else: st.error("密碼不一致")
 
+# [修復] 強化版 Logo 顯示 (防止 AttributeError)
 def render_logo():
-    logo = sys.get_logo()
-    if logo:
-        if logo.startswith("http"): st.sidebar.image(logo)
-        else: st.sidebar.image(f"data:image/png;base64,{logo}") if not logo.startswith("data:") else st.sidebar.image(logo)
-    else:
-        st.sidebar.image(LOGO_URL) # 預設
+    try:
+        raw_logo = sys.get_logo()
+        # 強制轉型為字串，並去除前後空白
+        logo = str(raw_logo).strip() if raw_logo else None
+
+        if logo and len(logo) > 10: # 確保有足夠長度的內容
+            if logo.startswith("http"): 
+                st.sidebar.image(logo, use_container_width=True)
+            elif logo.startswith("data:image"):
+                st.sidebar.image(logo, use_container_width=True)
+            else:
+                # 嘗試當作 base64 處理
+                st.sidebar.image(f"data:image/png;base64,{logo}", use_container_width=True)
+        else:
+            # 資料庫沒資料或資料錯誤，顯示預設 Logo
+            st.sidebar.image(LOGO_URL, use_container_width=True)
+    except Exception:
+        # 萬一發生任何錯誤，直接顯示預設 Logo，不讓程式崩潰
+        st.sidebar.image(LOGO_URL, use_container_width=True)
 
 # --- Pages ---
 
@@ -219,12 +225,10 @@ def admin_page():
         with st.form("invite"):
             c_name = st.text_input("姓名")
             c_email = st.text_input("Email")
-            # [新增] 履歷類型選擇
             r_type = st.radio("履歷類型", ["總公司 (HQ)", "分公司 (Branch)"], horizontal=True)
             
             if st.form_submit_button("建立並發送"):
                 if c_name and c_email:
-                    # 轉換代碼存入 DB
                     type_code = "Branch" if "分公司" in r_type else "HQ"
                     succ, msg = sys.create_candidate(user['email'], c_email, c_name, type_code)
                     if succ:
@@ -240,9 +244,7 @@ def admin_page():
         st.subheader("列表")
         df = sys.get_df("resumes")
         if not df.empty:
-            # 顯示 resume_type
             cols_show = ['status', 'name_cn', 'email', 'resume_type']
-            # 防呆：如果舊資料沒有 resume_type 欄位
             if 'resume_type' not in df.columns: df['resume_type'] = "HQ"
             
             submitted = df[df['status'].isin(['Submitted', 'Approved', 'Returned'])].copy()
@@ -253,7 +255,6 @@ def admin_page():
                 if sel_email:
                     target = df[df['email'] == sel_email].iloc[0]
                     st.divider()
-                    # 顯示類型標籤
                     rtype_badge = "🏢 總公司" if target.get('resume_type') == "HQ" else "🏪 分公司"
                     st.markdown(f"### {rtype_badge} - {target['name_cn']}")
                     
@@ -261,7 +262,6 @@ def admin_page():
                     c1.write(f"電話: {target['phone']}")
                     c1.write(f"學歷: {target['education_school']}")
                     
-                    # [新增] 顯示分公司專屬欄位
                     if target.get('resume_type') == 'Branch':
                         st.info(f"📍 志願地點: {target.get('branch_location', '未填')}")
                         st.info(f"🕒 輪班意願: {target.get('shift_avail', '未填')}")
@@ -279,10 +279,12 @@ def admin_page():
             else: st.info("無待審")
 
     with tab3:
+        st.write("設定 Logo (建議使用小圖)")
         up = st.file_uploader("Logo", type=['png','jpg'])
-        if up and st.button("更新"):
+        if up and st.button("更新 Logo"):
             b64 = base64.b64encode(up.getvalue()).decode()
-            sys.update_logo(b64); st.success("OK"); st.rerun()
+            sys.update_logo(f"data:image/png;base64,{b64}")
+            st.success("OK"); st.rerun()
 
 def candidate_page():
     user = st.session_state.user
@@ -293,7 +295,6 @@ def candidate_page():
     df = sys.get_df("resumes")
     my_resume = df[df['email'] == user['email']].iloc[0]
     status = my_resume['status']
-    # 讀取履歷類型 (預設 HQ)
     r_type = my_resume.get('resume_type', 'HQ') 
 
     if status == "Approved":
@@ -326,24 +327,21 @@ def candidate_page():
         eti = w2.text_input("職稱", value=my_resume['experience_title'])
         eyr = w3.number_input("年資", value=float(my_resume['experience_years']) if my_resume['experience_years'] else 0.0)
 
-        # --- [關鍵功能] 動態欄位顯示 ---
-        loc_pref = ""
-        shift_yn = ""
-        
         if r_type == "Branch":
             st.markdown("---")
             st.subheader("🏪 分公司專屬調查 (必填)")
-            # 根據 PDF OCR 內容設計
             loc_pref = st.multiselect(
                 "希望工作地點 (可複選)",
                 ["忠孝", "館前", "士林", "公館", "基隆", "羅東", "其他"],
                 default=str(my_resume.get('branch_location', '')).split(',') if my_resume.get('branch_location') else []
             )
-            
             c_shift1, c_shift2 = st.columns(2)
             shift_yn = c_shift1.radio("是否可配合輪班？", ["是", "否"], index=0 if my_resume.get('shift_avail')=="是" else 1)
-            
             st.markdown("---")
+        else:
+            # 總公司不需要這些欄位，設為空
+            loc_pref = []
+            shift_yn = ""
 
         st.subheader("技能與自傳")
         skills = st.text_area("技能", value=my_resume['skills'])
@@ -351,14 +349,12 @@ def candidate_page():
         
         c_s, c_d = st.columns(2)
         
-        # 收集資料
         form_data = {
             'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': dob, 'address': addr,
             'edu_school': esch, 'edu_major': emaj, 'edu_degree': edeg,
             'exp_co': eco, 'exp_title': eti, 'exp_years': eyr, 'skills': skills, 'self_intro': intro
         }
         
-        # 加入分公司資料
         if r_type == "Branch":
             form_data['branch_location'] = ",".join(loc_pref)
             form_data['shift_avail'] = shift_yn
@@ -368,14 +364,12 @@ def candidate_page():
             st.success("已暫存"); time.sleep(1); st.rerun()
             
         if c_d.form_submit_button("🚀 送出"):
-            # 防呆
             if not n_cn or not phone:
                 st.error("姓名電話必填")
             elif r_type == "Branch" and not loc_pref:
                 st.error("分公司請選擇希望地點")
             else:
                 sys.save_resume(user['email'], form_data, "Submitted")
-                # 通知 HR
                 hr = user.get('creator', '')
                 if hr: send_email(hr, f"收到履歷: {n_cn}", "請審核")
                 st.success("已送出"); time.sleep(1); st.rerun()
