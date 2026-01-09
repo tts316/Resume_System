@@ -14,7 +14,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 
 # --- 1. 系統設定 ---
-st.set_page_config(page_title="聯成電腦 - 面試人員履歷表", layout="wide", page_icon="📝")
+st.set_page_config(page_title="聯成電腦 - 人才招募系統", layout="wide", page_icon="📝")
 
 # Email 設定
 SMTP_SERVER = "smtp.gmail.com"
@@ -25,7 +25,7 @@ SENDER_PASSWORD = ""
 # Logo URL
 LOGO_URL = "https://www.lccnet.com.tw/img/logo.png"
 
-# 分公司區域資料 (連動選單用)
+# [關鍵設定] 分公司區域資料
 BRANCH_DATA = {
     "北一區": ["館前", "公館", "忠孝", "士林", "基隆", "羅東"],
     "北二區": ["板橋", "新莊", "三重", "永和"],
@@ -78,7 +78,8 @@ class ResumeDB:
         try:
             df = self.get_df("users")
             if df.empty: return None
-            user = df[df['email'].astype(str).str.strip().str.lower() == str(email).strip().lower()]
+            email_clean = str(email).strip().lower()
+            user = df[df['email'].astype(str).str.strip().str.lower() == email_clean]
             if not user.empty:
                 row = user.iloc[0]
                 if str(row['password']) == str(password):
@@ -90,7 +91,9 @@ class ResumeDB:
         try:
             df = self.get_df("users")
             if not df.empty and str(email) in df['email'].astype(str).values: return False, "Email 已存在"
+            
             self.ws_users.append_row([email, email, name, role, creator_email, str(date.today())])
+            
             if role == "candidate":
                 # 補足 40 欄
                 row_data = [email, "New", name] + [""] * 14 + ["", r_type] + [""] * 22
@@ -110,7 +113,6 @@ class ResumeDB:
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
                 r = cell.row
-                # 欄位 mapping (A=1)
                 mapping = {
                     'name_cn': 3, 'name_en': 4, 'phone': 5, 'address': 6, 'dob': 7,
                     'education_school': 8, 'education_major': 9, 'education_degree': 10,
@@ -181,13 +183,11 @@ def send_email(to_email, subject, body):
         return True
     except: return True 
 
-# --- PDF Generation (Enhanced) ---
+# --- PDF Generation ---
 def generate_pdf(data):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
-    
-    # Font
     try:
         pdfmetrics.registerFont(TTFont('TaipeiSans', 'TaipeiSansTCBeta-Regular.ttf'))
         font_name = 'TaipeiSans'
@@ -195,57 +195,54 @@ def generate_pdf(data):
     
     c.setFont(font_name, 18)
     c.drawString(50, height-50, "聯成電腦面試人員履歷表")
-    
     c.setFont(font_name, 10)
     y = height - 80
     
-    # 繪製表格框線與內容 (模擬)
-    # 這裡只列出關鍵欄位，完整還原需要大量座標 coding
-    # Row 1: Name, Email
-    c.drawString(50, y, f"姓名: {data.get('name_cn','')}  (英: {data.get('name_en','')})")
-    c.drawString(300, y, f"Email: {data.get('email','')}")
-    y -= 20
-    c.drawString(50, y, f"電話: {data.get('phone','')} / {data.get('home_phone','')}")
-    c.drawString(300, y, f"生日: {data.get('dob','')}")
-    y -= 20
-    c.drawString(50, y, f"地址: {data.get('address','')}")
-    y -= 30
+    fields = [
+        ("姓名", f"{data.get('name_cn','')} ({data.get('name_en','')})"),
+        ("Email", data.get('email','')),
+        ("電話", f"{data.get('phone','')} / {data.get('home_phone','')}"),
+        ("生日", data.get('dob','')),
+        ("地址", data.get('address','')),
+        ("婚姻", data.get('marital_status','')),
+        ("緊急聯絡", f"{data.get('emergency_contact','')} ({data.get('emergency_phone','')})")
+    ]
     
-    c.drawString(50, y, "[學歷]")
+    for k, v in fields:
+        c.drawString(50, y, f"{k}: {v}")
+        y -= 20
+
+    y -= 10
+    c.drawString(50, y, "--- 學經歷 ---")
     y -= 15
-    c.drawString(50, y, f"{data.get('education_school','')} | {data.get('education_major','')} | {data.get('education_degree','')}")
-    y -= 30
+    c.drawString(50, y, f"學歷: {data.get('education_school','')} {data.get('education_major','')} {data.get('education_degree','')}")
+    y -= 15
+    c.drawString(50, y, f"經歷: {data.get('experience_company','')} {data.get('experience_title','')} {data.get('experience_years','')}年")
     
-    c.drawString(50, y, "[工作經歷]")
-    y -= 15
-    c.drawString(50, y, f"{data.get('experience_company','')} | {data.get('experience_title','')} | {data.get('experience_years','')}年")
     y -= 30
-    
-    c.drawString(50, y, "[其他資訊]")
+    c.drawString(50, y, "--- 其他資訊 ---")
     y -= 15
-    c.drawString(50, y, f"來源: {data.get('source','')}")
+    c.drawString(50, y, f"來源: {data.get('source','')} | 兵役: {data.get('military_status','')}")
     y -= 15
-    c.drawString(50, y, f"兵役: {data.get('military_status','')}")
-    y -= 15
-    c.drawString(50, y, f"出國史: {data.get('travel_history','')}")
+    c.drawString(50, y, f"出國: {data.get('travel_history','')}")
     
     if data.get('resume_type') == 'Branch':
         y -= 30
-        c.drawString(50, y, "[分公司專屬]")
+        c.drawString(50, y, "--- 分公司意願 ---")
         y -= 15
         c.drawString(50, y, f"區域: {data.get('branch_region','')}")
-        c.drawString(200, y, f"分校: {data.get('branch_location','')}")
+        y -= 15
+        # 這裡會印出合併後的字串，例如：館前 (輪班可配合: 忠孝, 士林)
+        c.drawString(50, y, f"地點: {data.get('branch_location','')}")
         y -= 15
         c.drawString(50, y, f"配合輪班: {data.get('shift_avail','')}")
 
-    # QR Code (假設有圖片)
     try:
         c.drawImage("qrcode.png", 450, height-100, width=80, height=80)
     except: pass
     
-    # 簽名欄
     c.line(50, 100, 550, 100)
-    c.drawString(50, 110, "應徵人員親簽：______________________   日期：_____/_____/_____")
+    c.drawString(50, 80, "應徵人員親簽：______________________   日期：_____/_____/_____")
 
     c.showPage()
     c.save()
@@ -340,8 +337,15 @@ def admin_page():
                         pdf_data = generate_pdf(target.to_dict())
                         st.download_button("📥 下載 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
 
-                    with st.expander("查看履歷詳細內容", expanded=True):
-                        st.write(target.to_dict()) # 暫時以 JSON 顯示完整內容，可再優化 UI
+                    with st.container(border=True):
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.write(f"**姓名**: {target['name_cn']}")
+                        c2.write(f"**電話**: {target['phone']}")
+                        c3.write(f"**學歷**: {target['education_school']}")
+                        c4.write(f"**經歷**: {target['experience_company']}")
+                        if target.get('resume_type') == 'Branch':
+                            st.info(f"📍 {target.get('branch_location')} | 🕒 {target.get('shift_avail')}")
+                        st.text_area("自傳", value=target['self_intro'], disabled=True)
 
                     st.write("#### 審核操作")
                     cmt = st.text_input("評語", value=target['hr_comment'])
@@ -383,95 +387,90 @@ def candidate_page():
     with st.form("resume_form"):
         st.markdown(f"### {'🏢 總公司內勤' if r_type == 'HQ' else '🏪 分公司門市'} 履歷表")
         
-        # --- 基本資料 (擬真表格) ---
         with st.container(border=True):
             st.caption("基本資料")
             c1, c2, c3, c4 = st.columns(4)
             n_cn = c1.text_input("中文姓名", value=my_resume['name_cn'])
             n_en = c2.text_input("英文姓名", value=my_resume['name_en'])
-            # 性別/血型
-            # 這裡簡化，若需完整還原可加 radio
-            
             c3.text_input("身高(cm)", value=my_resume.get('height',''))
             c4.text_input("體重(kg)", value=my_resume.get('weight',''))
-
             c5, c6, c7 = st.columns([2, 1, 1])
             phone = c5.text_input("手機", value=my_resume['phone'])
             h_phone = c6.text_input("市話 (H)", value=my_resume.get('home_phone',''))
             m_status = c7.selectbox("婚姻", ["未婚", "已婚"], index=0)
-
+            try: dval = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
+            except: dval = date(1995,1,1)
+            dob = c1.date_input("生日", value=dval)
             addr = st.text_input("通訊地址", value=my_resume['address'])
-            
             c8, c9 = st.columns(2)
             c8.text_input("緊急聯絡人", value=my_resume.get('emergency_contact',''))
             c9.text_input("緊急聯絡電話", value=my_resume.get('emergency_phone',''))
 
-        # --- 雜項調查 ---
         with st.container(border=True):
             st.caption("其他資訊")
-            q1 = st.text_input("您是透過何種管道前來應徵？", value=my_resume.get('source',''))
-            q2 = st.text_input("是否有現在在本公司任職的親友？(姓名)", value=my_resume.get('relative_name',''))
-            q3 = st.radio("您是否曾在美語或電腦補習班任職過？", ["無", "有"], horizontal=True, index=0)
-            q4 = st.radio("今年度您是否有出國旅遊史？", ["無", "有"], horizontal=True, index=0)
-            q5 = st.radio("兵役狀況", ["未役", "免役", "役畢"], horizontal=True, index=0)
+            q1 = st.text_input("應徵管道？", value=my_resume.get('source',''))
+            q2 = st.text_input("任職親友？", value=my_resume.get('relative_name',''))
+            q3 = st.radio("補習班任職經驗？", ["無", "有"], horizontal=True, index=0)
+            q4 = st.radio("出國旅遊史？", ["無", "有"], horizontal=True, index=0)
+            q5 = st.radio("兵役", ["未役", "免役", "役畢"], horizontal=True, index=0)
 
-        # --- 學經歷 ---
         with st.container(border=True):
             st.caption("學經歷")
             c1, c2, c3 = st.columns([2, 1, 1])
             esch = c1.text_input("畢業學校", value=my_resume['education_school'])
             emaj = c2.text_input("科系", value=my_resume['education_major'])
             edeg = c3.selectbox("學位", ["學士", "碩士", "博士", "高中/職"], index=0)
-            
             c4, c5, c6 = st.columns([2, 1, 1])
             eco = c4.text_input("最近任職公司", value=my_resume['experience_company'])
             eti = c5.text_input("職稱", value=my_resume['experience_title'])
             eyr = c6.number_input("年資", value=float(my_resume['experience_years']) if my_resume['experience_years'] else 0.0)
 
-        # --- 分公司邏輯 ---
+        # [關鍵修改] 分公司動態邏輯
         loc_val = ""
         shift_val = ""
+        region = ""
         
         if r_type == "Branch":
             with st.container(border=True):
                 st.caption("🏪 分公司意願調查")
-                # 區域選單
-                region = st.selectbox("請選擇希望任職區域/分校", list(BRANCH_DATA.keys()))
+                region = st.selectbox("請選擇希望任職區域", list(BRANCH_DATA.keys()))
+                available_branches = BRANCH_DATA[region]
                 
-                # 是否配合輪班
+                # 單選: 首選分校
+                primary_branch = st.selectbox("請選擇希望任職分校 (首選)", available_branches)
+                
                 shift_idx = 0 if my_resume.get('shift_avail') == "是" else 1
                 shift_val = st.radio("是否可配合輪班？", ["是", "否"], index=shift_idx, horizontal=True)
                 
-                # 只有選是，才出現分校選單 (或者都出現)
-                available_branches = BRANCH_DATA[region]
-                old_loc = str(my_resume.get('branch_location', ''))
-                default_loc = [x for x in old_loc.split(',') if x in available_branches]
-                
+                backup_branches = []
                 if shift_val == "是":
-                    selected_branches = st.multiselect("希望分校 (可複選，至少選一)", available_branches, default=default_loc)
-                    loc_val = ",".join(selected_branches)
+                    backup_branches = st.multiselect("請勾選可配合輪班的分校 (複選)", available_branches)
                 else:
                     st.warning("⚠️ 分公司職務通常需要配合輪班，若選擇「否」可能影響錄取機會。")
-                    loc_val = "無法配合輪班"
+                
+                # 組合字串
+                if backup_branches:
+                    loc_val = f"{primary_branch} (輪班可配合: {', '.join(backup_branches)})"
+                else:
+                    loc_val = primary_branch
 
         with st.container(border=True):
             st.caption("技能與自傳")
             skills = st.text_area("專業技能", value=my_resume['skills'], height=100)
             intro = st.text_area("自傳 / 工作成就", value=my_resume['self_intro'], height=150)
-            
-            # QR Code 提示
             c_qr1, c_qr2 = st.columns([4, 1])
             c_qr1.info("本人所填資料均屬事實，若有不實或虛構，願隨時接受取消資格或無條件免職之處分。")
-            try: c_qr2.image("qrcode.png", caption="追蹤職缺消息")
+            try: c_qr2.image("qrcode.png", caption="追蹤職缺")
             except: pass
 
-        # 收集資料
+        c_s, c_d = st.columns(2)
+        
         form_data = {
-            'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': "", 'address': addr,
+            'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': dob, 'address': addr,
             'edu_school': esch, 'edu_major': emaj, 'edu_degree': edeg,
             'exp_co': eco, 'exp_title': eti, 'exp_years': eyr, 'skills': skills, 'self_intro': intro,
             'source': q1, 'relative_name': q2, 'teach_exp': q3, 'travel_history': q4, 'military_status': q5,
-            'home_phone': h_phone, 'marital_status': m_status, 'emergency_contact': "", 'emergency_phone': ""
+            'home_phone': h_phone, 'marital_status': m_status, 'emergency_contact': c8.value if 'c8' in locals() else "", 'emergency_phone': c9.value if 'c9' in locals() else ""
         }
         
         if r_type == "Branch":
@@ -479,14 +478,13 @@ def candidate_page():
             form_data['branch_location'] = loc_val
             form_data['shift_avail'] = shift_val
 
-        c_s, c_d = st.columns(2)
         if c_s.form_submit_button("💾 暫存"):
             sys.save_resume(user['email'], form_data, "Draft")
             st.success("已暫存"); time.sleep(1); st.rerun()
             
         if c_d.form_submit_button("🚀 送出審核"):
             if not n_cn or not phone: st.error("姓名與電話為必填")
-            elif r_type == "Branch" and shift_val=="是" and not loc_val: st.error("請選擇希望分校")
+            elif r_type == "Branch" and (not loc_val or not shift_val): st.error("請完成分公司意願調查")
             else:
                 sys.save_resume(user['email'], form_data, "Submitted")
                 hr = user.get('creator', '')
