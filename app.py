@@ -4,7 +4,7 @@ from datetime import datetime, date
 import time
 import base64
 import smtplib
-import io  # [關鍵修正] 補上這個 import
+import io  # [關鍵] 確保 io 模組被匯入
 from email.mime.text import MIMEText
 import gspread
 from google.oauth2.service_account import Credentials
@@ -132,6 +132,7 @@ class ResumeDB:
                 r = cell.row
                 headers = self.ws_resumes.row_values(1)
                 headers = [h.strip().lower() for h in headers]
+                
                 self.ws_resumes.update_cell(r, headers.index('status')+1, status)
                 for key, val in data.items():
                     key_lower = key.lower()
@@ -195,41 +196,36 @@ def send_email(to_email, subject, body):
         return True
     except: return True 
 
-# --- [修正] PDF 生成功能 (使用 Platypus Table) ---
+# --- PDF Generation ---
 def generate_pdf(data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
     elements = []
     
-    # 字型註冊
     font_name = 'Helvetica'
     try:
         pdfmetrics.registerFont(TTFont('TaipeiSans', 'TaipeiSansTCBeta-Regular.ttf'))
         font_name = 'TaipeiSans'
     except: pass
 
-    # 樣式
     styles = getSampleStyleSheet()
     styleN = ParagraphStyle('Normal', fontName=font_name, fontSize=10, leading=14)
     styleH = ParagraphStyle('Heading1', fontName=font_name, fontSize=18, leading=22, alignment=TA_CENTER)
     
-    # 標題
     title = "聯成電腦面試人員履歷表" if data.get('resume_type') != 'Branch' else "聯成電腦 (分公司) 面試人員履歷表"
     elements.append(Paragraph(title, styleH))
     elements.append(Spacer(1, 12))
 
-    # 通用表格樣式
     tbl_style = TableStyle([
         ('FONTNAME', (0,0), (-1,-1), font_name),
         ('FONTSIZE', (0,0), (-1,-1), 10),
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (0,-1), colors.lightgrey), # 第一欄背景灰
+        ('BACKGROUND', (0,0), (0,-1), colors.lightgrey),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('PADDING', (0,0), (-1,-1), 6),
     ])
 
-    # 1. 基本資料表格
     p_data = [
         ["姓名", f"{data.get('name_cn','')} ({data.get('name_en','')})", "應徵職務", "一般人員"],
         ["Email", data.get('email',''), "電話", f"{data.get('phone','')} / {data.get('home_phone','')}"],
@@ -242,7 +238,6 @@ def generate_pdf(data):
     elements.append(t1)
     elements.append(Spacer(1, 10))
 
-    # 2. 學歷表格
     elements.append(Paragraph("【學歷】", styleN))
     edu_data = [["學校名稱", "科系", "學位", "狀態"]]
     for i in range(1, 4):
@@ -256,13 +251,12 @@ def generate_pdf(data):
     t2.setStyle(TableStyle([
         ('FONTNAME', (0,0), (-1,-1), font_name),
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), # Header gray
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
     ]))
     elements.append(t2)
     elements.append(Spacer(1, 10))
 
-    # 3. 經歷表格
     elements.append(Paragraph("【工作經歷】", styleN))
     exp_data = [["公司名稱", "職稱", "年資", "薪資", "離職原因"]]
     for i in range(1, 5):
@@ -283,7 +277,6 @@ def generate_pdf(data):
     elements.append(t3)
     elements.append(Spacer(1, 10))
 
-    # 4. 其他資訊 (合併欄位)
     other_data = [
         ["應徵管道", data.get('source',''), "任職親友", data.get('relative_name','')],
         ["補教經驗", data.get('teach_exp',''), "出國史", data.get('travel_history','')],
@@ -295,7 +288,6 @@ def generate_pdf(data):
     elements.append(t4)
     elements.append(Spacer(1, 10))
 
-    # 5. 分公司專屬區塊
     if data.get('resume_type') == 'Branch':
         elements.append(Paragraph("【分公司排班意願調查】", styleN))
         br_data = [
@@ -317,23 +309,19 @@ def generate_pdf(data):
         elements.append(t5)
         elements.append(Spacer(1, 10))
 
-    # 6. 自傳
     elements.append(Paragraph("【專業技能與自傳】", styleN))
     elements.append(Paragraph(f"技能：{data.get('skills','')}", styleN))
     elements.append(Spacer(1, 5))
     elements.append(Paragraph(f"自傳：{data.get('self_intro','')}", styleN))
     elements.append(Spacer(1, 20))
 
-    # 7. 簽名區
     elements.append(Paragraph("_" * 80, styleN))
     elements.append(Spacer(1, 10))
     sign_text = "本人所填資料均屬事實，若有不實，願接受免職處分。     應徵人員親簽：______________________   日期：_____/_____/_____"
     elements.append(Paragraph(sign_text, styleN))
 
-    # QR Code (如果有圖片)
     try:
         qr = PDFImage("qrcode.png", width=60, height=60)
-        # 放在最後
         elements.append(Spacer(1, 10))
         elements.append(qr)
     except: pass
@@ -428,23 +416,72 @@ def admin_page():
                     
                     if target['status'] == "Approved":
                         pdf_data = generate_pdf(target.to_dict())
-                        st.download_button("📥 下載完整 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
+                        st.download_button("📥 下載 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
 
-                    with st.expander("查看履歷詳細內容", expanded=True):
-                         # 這裡為了畫面簡潔，只顯示部分，完整請下載 PDF
-                         st.write(f"姓名: {target['name_cn']} | 電話: {target['phone']}")
-                         st.write(f"學歷: {target.get('edu_1_school')} {target.get('edu_1_major')}")
-                         st.write(f"經歷: {target.get('exp_1_co')} {target.get('exp_1_title')}")
+                    with st.container(border=True):
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.write(f"**姓名**: {target['name_cn']}")
+                        c2.write(f"**電話**: {target['phone']}")
+                        c3.write(f"**學歷**: {target.get('edu_1_school', '')} {target.get('edu_1_major', '')}")
+                        c4.write(f"**經歷**: {target.get('exp_1_co', '')} {target.get('exp_1_title', '')}")
+                        if target.get('resume_type') == 'Branch':
+                            st.info(f"📍 {target.get('branch_location')} | 🕒 {target.get('shift_avail')}")
+                        st.text_area("自傳", value=target['self_intro'], disabled=True)
 
                     st.write("#### 審核操作")
-                    cmt = st.text_input("評語", value=target['hr_comment'])
-                    c_ok, c_no = st.columns(2)
-                    if c_ok.button("✅ 核准", key="ok"):
-                        sys.hr_update_status(sel_email, "Approved", cmt, date.today())
-                        st.success("已核准"); time.sleep(1); st.rerun()
-                    if c_no.button("↩️ 退件", key="no"):
-                        sys.hr_update_status(sel_email, "Returned", cmt)
-                        st.warning("已退件"); time.sleep(1); st.rerun()
+                    
+                    with st.form(f"hr_review_{target['email']}"):
+                        st.write("▼ 面試安排 (若通過請填寫)")
+                        c1, c2 = st.columns(2)
+                        int_date = c1.date_input("面試日期", value=date.today())
+                        int_time = c2.text_input("面試時間", placeholder="例如：14:30")
+                        
+                        c3, c4 = st.columns(2)
+                        int_loc = c3.text_input("面試地點", placeholder="總公司 502 會議室")
+                        int_dept = c4.text_input("面試單位", placeholder="行銷部")
+                        
+                        c5, c6 = st.columns(2)
+                        int_mgr = c5.text_input("面試主管", placeholder="王經理")
+                        int_note = c6.text_input("注意事項", placeholder="請攜帶作品集")
+                        
+                        hr_comment = st.text_input("評語 / 退件原因 (內部紀錄)")
+
+                        c_ok, c_no = st.columns(2)
+                        
+                        if c_ok.form_submit_button("✅ 核准 (發送通知)"):
+                            if not int_loc or not int_time:
+                                st.error("核准請填寫時間與地點")
+                            else:
+                                details = {
+                                    'hr_comment': hr_comment,
+                                    'interview_date': str(int_date),
+                                    'interview_time': int_time,
+                                    'interview_location': int_loc,
+                                    'interview_dept': int_dept,
+                                    'interview_manager': int_mgr,
+                                    'interview_notes': int_note
+                                }
+                                sys.hr_update_status(sel_email, "Approved", details)
+                                body = f"""{target['name_cn']} 您好，
+恭喜您通過履歷初審！我們誠摯邀請您前來參加面試。
+📅 日期：{int_date}
+⏰ 時間：{int_time}
+📍 地點：{int_loc}
+🏢 單位：{int_dept}
+👤 主管：{int_mgr}
+⚠️ 注意事項：{int_note}"""
+                                send_email(sel_email, "【聯成電腦】面試通知", body)
+                                st.success("已核准！"); time.sleep(2); st.rerun()
+
+                        if c_no.form_submit_button("↩️ 退件 (通知修改)"):
+                            if not hr_comment:
+                                st.error("請填寫退件原因")
+                            else:
+                                details = {'hr_comment': hr_comment}
+                                sys.hr_update_status(sel_email, "Returned", details)
+                                send_email(sel_email, "【聯成電腦】履歷需修改", f"原因：{hr_comment}")
+                                st.warning("已退件"); time.sleep(2); st.rerun()
+
             else: st.info("無待審履歷")
 
     if user['role'] == 'admin':
@@ -514,7 +551,6 @@ def candidate_page():
             b_type_val = my_resume.get('blood_type', 'O')
             c3.selectbox("血型", ["O", "A", "B", "AB"], index=["O", "A", "B", "AB"].index(b_type_val) if b_type_val in ["O", "A", "B", "AB"] else 0, key="blood_type")
 
-        # 學歷
         with st.container(border=True):
             st.caption("學歷 (請填寫最高及次高學歷)")
             for i in range(1, 4):
@@ -522,28 +558,29 @@ def candidate_page():
                 rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
                 rc1.text_input(f"學校", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
                 rc2.text_input(f"科系", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
+                
                 d_val = my_resume.get(f'edu_{i}_degree', '學士')
                 d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
                 d_idx = d_opts.index(d_val) if d_val in d_opts else 0
                 rc3.selectbox(f"學位", d_opts, index=d_idx, key=f'edu_{i}_degree_in')
+                
                 s_val = my_resume.get(f'edu_{i}_state', '畢業')
                 s_idx = 0 if s_val != "肄業" else 1
                 rc4.radio(f"狀態", ["畢業", "肄業"], index=s_idx, horizontal=True, key=f'edu_{i}_state_in', label_visibility="collapsed")
 
-        # 經歷
         with st.container(border=True):
             st.caption("曾任職公司 (最近4筆)")
             for i in range(1, 5):
                 with st.expander(f"經歷 {i}"):
                     ec1, ec2, ec3 = st.columns([2, 2, 1])
-                    ec1.text_input(f"公司名稱", value=my_resume.get(f'exp_{i}_co',''), key=f'exp_{i}_co_in')
+                    ec1.text_input(f"公司", value=my_resume.get(f'exp_{i}_co',''), key=f'exp_{i}_co_in')
                     ec2.text_input(f"職稱", value=my_resume.get(f'exp_{i}_title',''), key=f'exp_{i}_title_in')
                     try: y_val = float(my_resume.get(f'exp_{i}_years',0) or 0)
                     except: y_val = 0.0
                     ec3.number_input(f"年資", value=y_val, key=f'exp_{i}_years_in')
                     
                     ec4, ec5, ec6 = st.columns([1, 1, 1])
-                    ec4.text_input(f"主管姓名/職稱", value=my_resume.get(f'exp_{i}_boss',''), key=f'exp_{i}_boss_in')
+                    ec4.text_input(f"主管", value=my_resume.get(f'exp_{i}_boss',''), key=f'exp_{i}_boss_in')
                     ec5.text_input(f"電話", value=my_resume.get(f'exp_{i}_phone',''), key=f'exp_{i}_phone_in')
                     ec6.text_input(f"薪資", value=my_resume.get(f'exp_{i}_salary',''), key=f'exp_{i}_salary_in')
                     st.text_input(f"離職原因", value=my_resume.get(f'exp_{i}_reason',''), key=f'exp_{i}_reason_in')
@@ -580,7 +617,9 @@ def candidate_page():
                 if rot_val == "是":
                     saved_backups = []
                     if "(輪調: " in db_loc_str:
-                        try: content = db_loc_str.split("(輪調: ")[1].replace(")", ""); saved_backups = [x.strip() for x in content.split(", ")]
+                        try:
+                            content = db_loc_str.split("(輪調: ")[1].replace(")", "")
+                            saved_backups = [x.strip() for x in content.split(", ")]
                         except: pass
                     backup_opts = [b for b in available_branches if b != primary_branch]
                     valid_defaults = [b for b in saved_backups if b in backup_opts]
@@ -628,7 +667,9 @@ def candidate_page():
             st.caption("技能與自傳")
             skills = st.text_area("專業技能", value=my_resume['skills'], height=100, key='skills')
             intro = st.text_area("自傳 / 工作成就", value=my_resume['self_intro'], height=150, key='self_intro')
-            try: st.image("qrcode.png", caption="追蹤職缺", width=100)
+            c_qr1, c_qr2 = st.columns([4, 1])
+            c_qr1.info("本人所填資料均屬事實，若有不實或虛構，願隨時接受取消資格或無條件免職之處分。")
+            try: c_qr2.image("qrcode.png", caption="追蹤職缺")
             except: pass
 
         c_s, c_d = st.columns(2)
