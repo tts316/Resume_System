@@ -360,7 +360,7 @@ def admin_page():
                         c3.write(f"**學歷**: {target['education_school']}")
                         c4.write(f"**經歷**: {target['experience_company']}")
                         if target.get('resume_type') == 'Branch':
-                            st.info(f"📍 {target.get('branch_location')} | 🕒 {target.get('shift_avail')}")
+                            st.info(f"📍 {target.get('branch_location')}")
                         st.text_area("自傳", value=target['self_intro'], disabled=True)
 
                     st.write("#### 審核操作")
@@ -400,10 +400,58 @@ def candidate_page():
     elif status == "Submitted": st.info("⏳ 審核中"); return
     elif status == "Returned": st.error(f"被退回：{my_resume['hr_comment']}")
 
+    # [結構調整] 分公司意願區塊移出主表單，以實現動態互動
+    branch_data_to_save = {}
+    if r_type == "Branch":
+        st.info("👇 請先完成分公司意願調查 (連動選單)")
+        with st.container(border=True):
+            st.caption("🏪 分公司意願調查")
+            
+            # 1. 區域
+            saved_region = str(my_resume.get('branch_region', ''))
+            try: reg_idx = list(BRANCH_DATA.keys()).index(saved_region)
+            except: reg_idx = 0
+            region = st.selectbox("請選擇希望任職區域", list(BRANCH_DATA.keys()), index=reg_idx, key="reg_sel")
+            available_branches = BRANCH_DATA[region]
+            
+            # 2. 首選
+            db_loc_str = str(my_resume.get('branch_location', ''))
+            saved_primary = db_loc_str.split(' (')[0].strip()
+            try: p_idx = available_branches.index(saved_primary)
+            except: p_idx = 0
+            primary_branch = st.selectbox(f"請選擇 {region} 的首選分校 (單選)", available_branches, index=p_idx, key="pri_sel")
+            
+            # 3. 輪調意願 (新)
+            saved_rot = str(my_resume.get('accept_rotation', ''))
+            rot_idx = 0 if saved_rot == "是" else 1
+            rot_val = st.radio("是否可配合輪調 (支援不同分校)？", ["是", "否"], index=rot_idx, horizontal=True, key="rot_sel")
+            
+            # 4. 輪調分校複選
+            final_loc_str = primary_branch
+            if rot_val == "是":
+                saved_backups = []
+                if "(輪調: " in db_loc_str:
+                    try:
+                        content = db_loc_str.split("(輪調: ")[1].replace(")", "")
+                        saved_backups = [x.strip() for x in content.split(", ")]
+                    except: pass
+                
+                # 排除首選
+                backup_opts = [b for b in available_branches if b != primary_branch]
+                valid_defaults = [b for b in saved_backups if b in backup_opts]
+                
+                selected_backups = st.multiselect("請勾選可配合輪調的分校 (複選，至少選一)", backup_opts, default=valid_defaults, key="back_sel")
+                
+                if selected_backups:
+                    final_loc_str = f"{primary_branch} (輪調: {', '.join(selected_backups)})"
+                
+            branch_data_to_save['branch_region'] = region
+            branch_data_to_save['branch_location'] = final_loc_str
+            branch_data_to_save['accept_rotation'] = rot_val
+
     with st.form("resume_form"):
         st.markdown(f"### {'🏢 總公司內勤' if r_type == 'HQ' else '🏪 分公司門市'} 履歷表")
         
-        # 基本資料
         with st.container(border=True):
             st.caption("基本資料")
             c1, c2, c3, c4 = st.columns(4)
@@ -411,184 +459,96 @@ def candidate_page():
             n_en = c2.text_input("英文姓名", value=my_resume['name_en'], key='name_en')
             c3.text_input("身高(cm)", value=my_resume.get('height',''), key='height')
             c4.text_input("體重(kg)", value=my_resume.get('weight',''), key='weight')
-            
             c5, c6, c7 = st.columns([2, 1, 1])
             phone = c5.text_input("手機", value=my_resume['phone'], key='phone')
             c6.text_input("市話 (H)", value=my_resume.get('home_phone',''), key='home_phone')
-            
             m_val = my_resume.get('marital_status', '未婚')
             m_idx = ["未婚", "已婚"].index(m_val) if m_val in ["未婚", "已婚"] else 0
             c7.selectbox("婚姻", ["未婚", "已婚"], index=m_idx, key='marital_status')
-            
             try: dval = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
             except: dval = date(1995,1,1)
             dob = c1.date_input("生日", value=dval, key='dob')
             addr = st.text_input("通訊地址", value=my_resume['address'], key='address')
-            
             c8, c9 = st.columns(2)
             c8.text_input("緊急聯絡人", value=my_resume.get('emergency_contact',''), key='emergency_contact')
             c9.text_input("緊急聯絡電話", value=my_resume.get('emergency_phone',''), key='emergency_phone')
-            
             b_type_val = my_resume.get('blood_type', 'O')
             c3.selectbox("血型", ["O", "A", "B", "AB"], index=["O", "A", "B", "AB"].index(b_type_val) if b_type_val in ["O", "A", "B", "AB"] else 0, key="blood_type")
 
-        # 學歷
         with st.container(border=True):
-            st.caption("學歷 (請填寫最高及次高學歷)")
+            st.caption("學歷")
             for i in range(1, 4):
                 st.markdown(f"**學歷 {i}**")
                 rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
-                st.session_state[f'edu_{i}_school'] = rc1.text_input(f"學校 {i}", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
-                st.session_state[f'edu_{i}_major'] = rc2.text_input(f"科系 {i}", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
-                
+                rc1.text_input(f"學校", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
+                rc2.text_input(f"科系", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
                 d_val = my_resume.get(f'edu_{i}_degree', '學士')
                 d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
                 d_idx = d_opts.index(d_val) if d_val in d_opts else 0
-                st.session_state[f'edu_{i}_degree'] = rc3.selectbox(f"學位 {i}", d_opts, index=d_idx, key=f'edu_{i}_degree_in')
-                
+                rc3.selectbox(f"學位", d_opts, index=d_idx, key=f'edu_{i}_degree_in')
                 s_val = my_resume.get(f'edu_{i}_state', '畢業')
                 s_idx = 0 if s_val != "肄業" else 1
-                st.session_state[f'edu_{i}_state'] = rc4.radio(f"狀態 {i}", ["畢業", "肄業"], index=s_idx, horizontal=True, key=f'edu_{i}_state_in', label_visibility="collapsed")
+                rc4.radio(f"狀態", ["畢業", "肄業"], index=s_idx, horizontal=True, key=f'edu_{i}_state_in', label_visibility="collapsed")
 
-        # 經歷
         with st.container(border=True):
-            st.caption("曾任職公司 (最近4筆)")
+            st.caption("曾任職公司")
             for i in range(1, 5):
                 with st.expander(f"經歷 {i}"):
                     ec1, ec2, ec3 = st.columns([2, 2, 1])
-                    st.session_state[f'exp_{i}_co'] = ec1.text_input(f"公司名稱 {i}", value=my_resume.get(f'exp_{i}_co',''), key=f'exp_{i}_co_in')
-                    st.session_state[f'exp_{i}_title'] = ec2.text_input(f"職稱 {i}", value=my_resume.get(f'exp_{i}_title',''), key=f'exp_{i}_title_in')
+                    st.session_state[f'exp_{i}_co'] = ec1.text_input(f"公司", value=my_resume.get(f'exp_{i}_co',''), key=f'exp_{i}_co_in')
+                    st.session_state[f'exp_{i}_title'] = ec2.text_input(f"職稱", value=my_resume.get(f'exp_{i}_title',''), key=f'exp_{i}_title_in')
                     try: y_val = float(my_resume.get(f'exp_{i}_years',0) or 0)
                     except: y_val = 0.0
-                    st.session_state[f'exp_{i}_years'] = ec3.number_input(f"年資 {i}", value=y_val, key=f'exp_{i}_years_in')
-                    
+                    st.session_state[f'exp_{i}_years'] = ec3.number_input(f"年資", value=y_val, key=f'exp_{i}_years_in')
                     ec4, ec5, ec6 = st.columns([1, 1, 1])
-                    st.session_state[f'exp_{i}_boss'] = ec4.text_input(f"主管 {i}", value=my_resume.get(f'exp_{i}_boss',''), key=f'exp_{i}_boss_in')
-                    st.session_state[f'exp_{i}_phone'] = ec5.text_input(f"電話 {i}", value=my_resume.get(f'exp_{i}_phone',''), key=f'exp_{i}_phone_in')
-                    st.session_state[f'exp_{i}_salary'] = ec6.text_input(f"薪資 {i}", value=my_resume.get(f'exp_{i}_salary',''), key=f'exp_{i}_salary_in')
-                    st.session_state[f'exp_{i}_reason'] = st.text_input(f"離職原因 {i}", value=my_resume.get(f'exp_{i}_reason',''), key=f'exp_{i}_reason_in')
+                    st.session_state[f'exp_{i}_boss'] = ec4.text_input(f"主管", value=my_resume.get(f'exp_{i}_boss',''), key=f'exp_{i}_boss_in')
+                    st.session_state[f'exp_{i}_phone'] = ec5.text_input(f"電話", value=my_resume.get(f'exp_{i}_phone',''), key=f'exp_{i}_phone_in')
+                    st.session_state[f'exp_{i}_salary'] = ec6.text_input(f"薪資", value=my_resume.get(f'exp_{i}_salary',''), key=f'exp_{i}_salary_in')
+                    st.text_input(f"離職原因", value=my_resume.get(f'exp_{i}_reason',''), key=f'exp_{i}_reason_in')
 
-        # [修正] 分公司邏輯
-        loc_val = ""
-        shift_val = ""
-        rot_val = ""
-        region = ""
-        
         if r_type == "Branch":
-            with st.container(border=True):
-                st.caption("🏪 分公司意願調查")
-                # 1. 區域
-                saved_region = str(my_resume.get('branch_region', ''))
-                try: reg_idx = list(BRANCH_DATA.keys()).index(saved_region)
-                except: reg_idx = 0
-                region = st.selectbox("請選擇希望任職區域", list(BRANCH_DATA.keys()), index=reg_idx, key="reg_sel")
-                available_branches = BRANCH_DATA[region]
-                
-                # 2. 首選 (單選)
-                db_loc_str = str(my_resume.get('branch_location', ''))
-                saved_primary = db_loc_str.split(' (')[0].strip()
-                try: p_idx = available_branches.index(saved_primary)
-                except: p_idx = 0
-                primary_branch = st.selectbox(f"請選擇 {region} 的首選分校 (單選)", available_branches, index=p_idx, key="pri_sel")
-                
-                # 3. 輪調意願 (獨立開關)
-                saved_rot = str(my_resume.get('accept_rotation', ''))
-                rot_idx = 0 if saved_rot == "是" else 1
-                rot_val = st.radio("是否可配合輪調 (支援不同分校)？", ["是", "否"], index=rot_idx, horizontal=True, key="rot_sel")
-                
-                # 4. 輪調分校複選
-                if rot_val == "是":
-                    saved_backups = []
-                    if "(輪調: " in db_loc_str:
-                        try:
-                            content = db_loc_str.split("(輪調: ")[1].replace(")", "")
-                            saved_backups = [x.strip() for x in content.split(",")]
-                        except: pass
-                    
-                    backup_opts = [b for b in available_branches if b != primary_branch]
-                    valid_defaults = [b for b in saved_backups if b in backup_opts]
-                    
-                    selected_backups = st.multiselect("請勾選可配合輪調的分校 (複選)", backup_opts, default=valid_defaults, key="back_sel")
-                    
-                    if selected_backups:
-                        loc_val = f"{primary_branch} (輪調: {', '.join(selected_backups)})"
-                    else:
-                        loc_val = primary_branch
-                else:
-                    loc_val = primary_branch
-
-                # 5. 輪班 (獨立)
-                st.divider()
-                saved_shift = str(my_resume.get('shift_avail', ''))
-                shift_idx = 0 if saved_shift == "是" else 1
-                shift_val = st.radio("是否可配合輪班 (同一分校不同時間)？", ["是", "否"], index=shift_idx, horizontal=True, key="shift_sel")
-                
-                if shift_val == "否":
-                    st.warning("⚠️ 分公司職務通常需要配合輪班，若選擇「否」可能影響錄取機會。")
-                
-                st.divider()
-                st.write("排班細節與家庭狀況")
-                def get_yn_idx(v): return 0 if v in ["可以", "同意", "需要"] else 1
-                
-                c_h1, c_h2 = st.columns(2)
-                st.session_state['holiday_shift'] = c_h1.radio("國定假日輪值？", ["可以", "不可以"], index=get_yn_idx(my_resume.get('holiday_shift')), horizontal=True, key='holiday_shift')
-                st.session_state['rotate_shift'] = c_h2.radio("配合輪早晚班？(早9-18, 晚14-22)", ["可以", "不可以"], index=get_yn_idx(my_resume.get('rotate_shift')), horizontal=True, key='rotate_shift')
-                
-                c_f1, c_f2 = st.columns(2)
-                st.session_state['family_support_shift'] = c_f1.radio("家人同意輪班？", ["同意", "不同意"], index=get_yn_idx(my_resume.get('family_support_shift')), horizontal=True, key='family_support_shift')
-                
-                c_d1, c_d2 = st.columns(2)
-                st.session_state['care_dependent'] = c_d1.radio("需獨力扶養長幼？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('care_dependent')), horizontal=True, key='care_dependent')
-                st.session_state['financial_burden'] = c_d2.radio("需獨力負擔家計？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('financial_burden')), horizontal=True, key='financial_burden')
+            st.divider()
+            def get_yn_idx(v): return 0 if v in ["可以", "同意", "需要"] else 1
+            
+            c_h1, c_h2 = st.columns(2)
+            st.session_state['shift_avail'] = c_h1.radio("是否可配合輪班？", ["是", "否"], index=0 if my_resume.get('shift_avail')=="是" else 1, horizontal=True, key='shift_avail')
+            if st.session_state['shift_avail'] == "否": st.warning("⚠️ 分公司職務通常需要配合輪班")
+            
+            st.session_state['holiday_shift'] = c_h1.radio("國定假日輪值？", ["可以", "不可以"], index=get_yn_idx(my_resume.get('holiday_shift')), horizontal=True, key='holiday_shift')
+            st.session_state['rotate_shift'] = c_h2.radio("配合輪早晚班？", ["可以", "不可以"], index=get_yn_idx(my_resume.get('rotate_shift')), horizontal=True, key='rotate_shift')
+            st.session_state['family_support_shift'] = st.radio("家人同意輪班？", ["同意", "不同意"], index=get_yn_idx(my_resume.get('family_support_shift')), horizontal=True, key='family_support_shift')
+            
+            c_d1, c_d2 = st.columns(2)
+            st.session_state['care_dependent'] = c_d1.radio("需獨力扶養長幼？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('care_dependent')), horizontal=True, key='care_dependent')
+            st.session_state['financial_burden'] = c_d2.radio("需獨力負擔家計？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('financial_burden')), horizontal=True, key='financial_burden')
 
         with st.container(border=True):
-            st.caption("其他資訊")
+            st.caption("其他")
             st.text_input("應徵管道", value=my_resume.get('source',''), key='source')
             st.text_input("任職親友", value=my_resume.get('relative_name',''), key='relative_name')
-            
             def get_idx01(v): return 0 if v != "有" else 1
-            def get_idx_mil(v): return ["未役", "免役", "役畢"].index(v) if v in ["未役", "免役", "役畢"] else 0
-            
             st.radio("補教經驗", ["無", "有"], index=get_idx01(my_resume.get('teach_exp')), horizontal=True, key='teach_exp')
             st.radio("出國史", ["無", "有"], index=get_idx01(my_resume.get('travel_history')), horizontal=True, key='travel_history')
-            st.radio("兵役", ["未役", "免役", "役畢"], index=get_idx_mil(my_resume.get('military_status')), horizontal=True, key='military_status')
-            
+            st.radio("兵役", ["未役", "免役", "役畢"], index=0, horizontal=True, key='military_status')
             st.radio("近年住院史？", ["無", "有"], index=get_idx01(my_resume.get('hospitalization')), horizontal=True, key='hospitalization')
             st.radio("慢性病藥控？", ["無", "有"], index=get_idx01(my_resume.get('chronic_disease')), horizontal=True, key='chronic_disease')
-            
-            c_fam1, c_fam2 = st.columns(2)
-            st.session_state['family_support'] = c_fam1.radio("獨力扶養？", ["需要", "不需要"], index=0 if my_resume.get('family_support')!="需要" else 1, horizontal=True, key='family_support')
-            st.session_state['family_debt'] = c_fam2.radio("獨力負擔？", ["需要", "不需要"], index=0 if my_resume.get('family_debt')!="需要" else 1, horizontal=True, key='family_debt')
-            
-            c_com1, c_com2 = st.columns(2)
-            st.text_input("通勤方式", value=my_resume.get('commute_method',''), key='commute_method')
-            st.text_input("通勤時間(分)", value=my_resume.get('commute_time',''), key='commute_time')
 
         with st.container(border=True):
-            st.caption("技能與自傳")
+            st.caption("自傳")
             skills = st.text_area("專業技能", value=my_resume['skills'], height=100, key='skills')
-            intro = st.text_area("自傳 / 工作成就", value=my_resume['self_intro'], height=150, key='self_intro')
-            c_qr1, c_qr2 = st.columns([4, 1])
-            c_qr1.info("本人所填資料均屬事實，若有不實或虛構，願隨時接受取消資格或無條件免職之處分。")
-            try: c_qr2.image("qrcode.png", caption="追蹤職缺")
+            intro = st.text_area("自傳", value=my_resume['self_intro'], height=150, key='self_intro')
+            try: st.image("qrcode.png", width=100)
             except: pass
 
         c_s, c_d = st.columns(2)
-        
-        # 收集資料
         form_data = {
             'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': dob, 'address': addr,
             'skills': skills, 'self_intro': intro
         }
         for k in st.session_state:
-            if isinstance(k, str) and k not in ['user', 'logged_in']:
-                form_data[k] = st.session_state[k]
+            if isinstance(k, str) and k not in ['user', 'logged_in']: form_data[k] = st.session_state[k]
         
-        if r_type == "Branch":
-            form_data['branch_region'] = region
-            form_data['branch_location'] = loc_val
-            form_data['shift_avail'] = shift_val
-            form_data['accept_rotation'] = rot_val
+        if r_type == "Branch": form_data.update(branch_data_to_save)
 
         if c_s.form_submit_button("💾 暫存"):
             sys.save_resume(user['email'], form_data, "Draft")
@@ -596,11 +556,12 @@ def candidate_page():
             
         if c_d.form_submit_button("🚀 送出"):
             if not n_cn or not phone: st.error("姓名電話必填")
-            elif r_type == "Branch" and rot_val=="是" and "輪調" not in loc_val: st.error("請勾選可配合輪調的分校")
+            elif r_type == "Branch" and branch_data_to_save['accept_rotation']=="是" and "輪調" not in branch_data_to_save['branch_location']:
+                st.error("請勾選輪調分校")
             else:
                 sys.save_resume(user['email'], form_data, "Submitted")
                 hr = user.get('creator', '')
-                if hr: send_email(hr, f"履歷送審: {n_cn}", "請登入審閱")
+                if hr: send_email(hr, f"履歷: {n_cn}", "請審閱")
                 st.success("已送出"); time.sleep(1); st.rerun()
 
 # --- Entry ---
