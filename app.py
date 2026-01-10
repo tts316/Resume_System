@@ -442,9 +442,45 @@ def admin_page():
             submitted = df[df['status'].isin(['Submitted', 'Approved', 'Returned'])].copy()
             if not submitted.empty:
                 st.dataframe(submitted[['status', 'name_cn', 'email', 'resume_type']])
+# === 修正後的履歷審核列表邏輯 (約第 446 ~ 460 行) ===
+    with current_tab[1]:
+        st.subheader("履歷審核列表")
+        df_resumes = sys.get_df("resumes")
+        df_users = sys.get_df("users")
+        
+        if not df_resumes.empty and not df_users.empty:
+            # 1. 關聯 Users 表以取得 creator_email
+            # 注意：這裡假設 users 表的 email 是唯一的 Key
+            merged_df = df_resumes.merge(df_users[['email', 'creator_email']], on='email', how='left')
+            
+            # 2. 權限篩選
+            # 如果是 Admin (超級管理員)，可以看到全部 (或是也限制只看自己的，視需求而定)
+            # 這裡設定為：Admin看全部，PM只看自己的
+            if user['role'] == 'admin':
+                filtered_df = merged_df
+            else:
+                # PM 只能看到 creator_email 等於自己 email 的履歷
+                # 強制轉字串與小寫比對，避免格式問題
+                my_email = str(user['email']).strip().lower()
+                # 確保 creator_email 欄位存在且轉型
+                if 'creator_email' in merged_df.columns:
+                    filtered_df = merged_df[merged_df['creator_email'].astype(str).str.strip().str.lower() == my_email]
+                else:
+                    filtered_df = pd.DataFrame() # 欄位錯誤時不顯示
+
+            # 3. 狀態篩選 (只顯示已送審/核准/退件)
+            submitted = filtered_df[filtered_df['status'].isin(['Submitted', 'Approved', 'Returned'])].copy()
+            
+            if not submitted.empty:
+                st.dataframe(submitted[['status', 'name_cn', 'email', 'resume_type']])
+                
+                # 下拉選單只顯示篩選後的名單
                 sel_email = st.selectbox("選擇候選人", submitted['email'].unique())
+                
                 if sel_email:
-                    target = df[df['email'] == sel_email].iloc[0]
+                    # 取得該筆資料 (從原始 df_resumes 取值以確保資料完整)
+                    target = df_resumes[df_resumes['email'] == sel_email].iloc[0]
+                    # ... (接續原本的顯示邏輯) ...
                     st.divider()
                     st.markdown(f"### 📄 {target['name_cn']} 履歷表")
                     
@@ -768,4 +804,5 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
