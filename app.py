@@ -505,11 +505,23 @@ def admin_page():
                     st.write("#### 審核操作")
                     cmt = st.text_input("評語", value=target['hr_comment'])
                     c_ok, c_no = st.columns(2)
+# 修正後的核准按鈕邏輯 (約第 506 ~ 515 行)
                     if c_ok.button("✅ 核准", key="ok"):
-                        sys.hr_update_status(sel_email, "Approved", cmt, date.today())
+                        # 建立 details 字典來傳遞額外資訊
+                        details = {
+                            'hr_comment': cmt,
+                            'interview_date': str(date.today())
+                        }
+                        sys.hr_update_status(sel_email, "Approved", details)
+                        
+                        # 發送簡單通知信 (若無詳細面試資訊)
+                        send_email(sel_email, "【聯成電腦】履歷審核通過", f"恭喜，您的履歷已通過審核。\nHR 留言：{cmt}")
                         st.success("已核准"); time.sleep(1); st.rerun()
+# 修正後的退件按鈕邏輯 (約第 516 ~ 520 行)
                     if c_no.button("↩️ 退件", key="no"):
-                        sys.hr_update_status(sel_email, "Returned", cmt)
+                        details = {'hr_comment': cmt}
+                        sys.hr_update_status(sel_email, "Returned", details)
+                        send_email(sel_email, "【聯成電腦】履歷需修改通知", f"您的履歷被退回。\n原因：{cmt}\n\n請登入系統修正後，重新送出審核。")
                         st.warning("已退件"); time.sleep(1); st.rerun()
             else: st.info("無待審履歷")
 
@@ -756,3 +768,4 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
