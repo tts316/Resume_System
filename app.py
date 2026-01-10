@@ -218,7 +218,7 @@ def send_email(to_email, subject, body):
     except:
         return True 
 
-# --- PDF Generation ---
+# --- PDF Generation (Enhanced with Dates) ---
 def generate_pdf(data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
@@ -248,7 +248,7 @@ def generate_pdf(data):
         ('PADDING', (0,0), (-1,-1), 6),
     ])
 
-    # 1. 基本資料
+    # 1. 基本資料 (不變)
     p_data = [
         ["姓名", f"{data.get('name_cn','')} ({data.get('name_en','')})", "應徵職務", "一般人員"],
         ["Email", data.get('email',''), "電話", f"{data.get('phone','')} / {data.get('home_phone','')}"],
@@ -261,27 +261,38 @@ def generate_pdf(data):
     elements.append(t1)
     elements.append(Spacer(1, 10))
 
-    # 2. 學歷
+    # 2. 學歷 (新增起訖日期欄位)
     elements.append(Paragraph("【學歷】", styleN))
-    edu_data = [["學校名稱", "科系", "學位", "狀態"]]
+    # [修正] 標題加入 "起訖"
+    edu_data = [["起訖", "學校名稱", "科系", "學位", "狀態"]]
     for i in range(1, 4):
+        # [修正] 讀取起訖日期 (假設欄位名稱為 edu_i_start/end，若無則留空)
+        # 注意：之前的資料庫擴充並未包含學歷日期，若您希望 PDF 有，需在填寫介面增加欄位
+        # 這裡先示範如果未來有欄位的寫法，目前暫時留空或填入 "自~至" 格式
+        # 假設資料庫已有 edu_1_start 欄位 (若無請在 resumes 增加)
+        s_date = f"{data.get(f'edu_{i}_start','')}~{data.get(f'edu_{i}_end','')}"
+        
         edu_data.append([
+            s_date,
             data.get(f'edu_{i}_school',''), 
             data.get(f'edu_{i}_major',''), 
             data.get(f'edu_{i}_degree',''), 
             data.get(f'edu_{i}_state','')
         ])
-    t2 = Table(edu_data, colWidths=[180, 150, 100, 100])
+    
+    # [修正] 欄寬調整以容納日期
+    t2 = Table(edu_data, colWidths=[100, 150, 130, 80, 70])
     t2.setStyle(TableStyle([
         ('FONTNAME', (0,0), (-1,-1), font_name),
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTSIZE', (0,0), (-1,-1), 9),
     ]))
     elements.append(t2)
     elements.append(Spacer(1, 10))
 
-    # 3. 經歷
+    # 3. 經歷 (已包含起訖，保持原樣或微調)
     elements.append(Paragraph("【工作經歷】", styleN))
     exp_data = [["起訖", "公司名稱", "職位", "主管/電話", "薪資", "離職原因"]]
     for i in range(1, 5):
@@ -295,7 +306,7 @@ def generate_pdf(data):
             data.get(f'exp_{i}_salary',''), 
             data.get(f'exp_{i}_reason','')
         ])
-    t3 = Table(exp_data, colWidths=[80, 100, 80, 100, 50, 120])
+    t3 = Table(exp_data, colWidths=[100, 100, 70, 100, 50, 110])
     t3.setStyle(TableStyle([
         ('FONTNAME', (0,0), (-1,-1), font_name),
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
@@ -804,5 +815,6 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
