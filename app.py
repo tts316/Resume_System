@@ -641,11 +641,28 @@ def candidate_page():
             b_type_val = my_resume.get('blood_type', 'O')
             c3.selectbox("血型", ["O", "A", "B", "AB"], index=["O", "A", "B", "AB"].index(b_type_val) if b_type_val in ["O", "A", "B", "AB"] else 0, key="blood_type")
 
-        # 學歷
+# --- 學歷區塊 (修改後：新增起訖日期) ---
         with st.container(border=True):
             st.caption("學歷 (請填寫最高及次高學歷)")
             for i in range(1, 4):
                 st.markdown(f"**學歷 {i}**")
+                
+                # [新增] 第一排：起訖日期輸入框
+                c_d1, c_d2 = st.columns(2)
+                st.session_state[f'edu_{i}_start'] = c_d1.text_input(
+                    f"入學年月 (YYYY/MM) #{i}", 
+                    value=my_resume.get(f'edu_{i}_start', ''), 
+                    key=f'edu_{i}_start_in',
+                    placeholder="例如: 2018/09"
+                )
+                st.session_state[f'edu_{i}_end'] = c_d2.text_input(
+                    f"畢/肄業年月 (YYYY/MM) #{i}", 
+                    value=my_resume.get(f'edu_{i}_end', ''), 
+                    key=f'edu_{i}_end_in',
+                    placeholder="例如: 2022/06"
+                )
+
+                # [原有] 第二排：學校詳細資訊
                 rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
                 st.session_state[f'edu_{i}_school'] = rc1.text_input(f"學校 {i}", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
                 st.session_state[f'edu_{i}_major'] = rc2.text_input(f"科系 {i}", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
@@ -658,8 +675,9 @@ def candidate_page():
                 s_val = my_resume.get(f'edu_{i}_state', '畢業')
                 s_idx = 0 if s_val != "肄業" else 1
                 st.session_state[f'edu_{i}_state'] = rc4.radio(f"狀態 {i}", ["畢業", "肄業"], index=s_idx, horizontal=True, key=f'edu_{i}_state_in', label_visibility="collapsed")
-
-        # 經歷
+                
+                if i < 3: st.divider() # 區隔線
+                    
         with st.container(border=True):
             st.caption("曾任職公司 (最近4筆)")
             for i in range(1, 5):
@@ -815,6 +833,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
