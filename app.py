@@ -528,11 +528,27 @@ def admin_page():
                         for x in range(1, 4):
                             s = target.get(f'edu_{x}_school')
                             if s: 
-                                # [修正] 加入日期顯示
+                                # [修正] 補上起訖日期
                                 date_range = f"{target.get(f'edu_{x}_start','')} ~ {target.get(f'edu_{x}_end','')}"
                                 st.write(f"**{x}. {s}** ({date_range})")
-                                st.write(f"   {target.get(f'edu_{x}_major')} | {target.get(f'edu_{x}_degree')} | {target.get(f'edu_{x}_state')}")                        
+                                st.write(f"   科系: {target.get(f'edu_{x}_major')} | 學位: {target.get(f'edu_{x}_degree')} | 狀態: {target.get(f'edu_{x}_state')}")
                         
+                        st.markdown("**【工作經歷】**")
+                        for x in range(1, 5):
+                            co = target.get(f'exp_{x}_co')
+                            if co: 
+                                # [修正] 補上起訖日期、薪資、離職原因
+                                date_range = f"{target.get(f'exp_{x}_start','')} ~ {target.get(f'exp_{x}_end','')}"
+                                st.markdown(f"**{x}. {co}** ({date_range})")
+                                c_job1, c_job2 = st.columns(2)
+                                c_job1.write(f"職稱: {target.get(f'exp_{x}_title')}")
+                                c_job2.write(f"薪資: {target.get(f'exp_{x}_salary')}")
+                                
+                                c_boss1, c_boss2 = st.columns(2)
+                                c_boss1.write(f"主管: {target.get(f'exp_{x}_boss')} ({target.get(f'exp_{x}_phone')})")
+                                c_boss2.write(f"離職原因: {target.get(f'exp_{x}_reason')}")
+                                st.divider()
+                                
                         st.markdown("**【工作經歷】**")
                         for x in range(1, 5):
                             co = target.get(f'exp_{x}_co')
@@ -799,15 +815,26 @@ def candidate_page():
 
         c_s, c_d = st.columns(2)
         
-        # 收集資料
+        # 收集資料 (明確加入所有非 Session State 自動管理的欄位)
         form_data = {
             'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': dob, 'address': addr,
-            'skills': skills, 'self_intro': intro,'marital_status' :marital_status
+            'skills': skills, 'self_intro': intro,
+            # [建議] 顯式加入這些 Selectbox/Radio 的值，防止 Session State 沒抓到
+            'marital_status': m_status,
+            'blood_type': b_type_val, 
+            'shift_avail': shift_val,
+            'holiday_shift': holiday_shift,
+            'rotate_shift': rotate_shift,
+            'family_support_shift': family_support_shift,
+            'care_dependent': care_dependent,
+            'financial_burden': financial_burden
         }
-        # 自動收集 Session State
-        for k in st.session_state:
-            if isinstance(k, str) and k not in ['user', 'logged_in']: form_data[k] = st.session_state[k]
         
+        # 自動收集 Session State (針對 text_input 動態欄位)
+        for k in st.session_state:
+            if isinstance(k, str) and k not in ['user', 'logged_in']: 
+                form_data[k] = st.session_state[k]
+                
         if r_type == "Branch":
             form_data['branch_region'] = region
             form_data['branch_location'] = loc_val
@@ -845,6 +872,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
