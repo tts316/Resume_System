@@ -128,31 +128,37 @@ class ResumeDB:
         except Exception as e: return False, str(e)
 
     # [關鍵修復]：自動移除 Key 後面的 `_in`，以匹配資料庫欄位
-    def save_resume(self, email, data, status="Draft"):
+def save_resume(self, email, data, status="Draft"):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
                 r = cell.row
                 headers = self.ws_resumes.row_values(1)
+                # 轉小寫去空白
                 headers = [h.strip().lower() for h in headers]
                 
-                self.ws_resumes.update_cell(r, headers.index('status')+1, status)
+                # 1. 更新狀態
+                if 'status' in headers:
+                    self.ws_resumes.update_cell(r, headers.index('status')+1, status)
                 
+                # 2. 智慧寫入所有欄位
                 for key, val in data.items():
-                    # 清洗 Key：如果 key 是 'edu_1_school_in' -> 變成 'edu_1_school'
+                    # 清洗 Key：移除 _in 後綴 (針對 input 欄位)
                     clean_key = key.lower()
                     if clean_key.endswith("_in"):
-                        clean_key = clean_key[:-3] # 去掉最後3個字 (_in)
+                        clean_key = clean_key[:-3]
+                    
+                    # [修正] 對於沒有 _in 的欄位 (如 marital_status)，直接使用原 key
                     
                     if clean_key in headers:
                         col_idx = headers.index(clean_key) + 1
+                        # 日期轉字串
                         if isinstance(val, (date, datetime)):
                             val = str(val)
                         self.ws_resumes.update_cell(r, col_idx, val)
                 return True, "儲存成功"
             return False, "No Data"
         except Exception as e: return False, str(e)
-
     def hr_update_status(self, email, status, details=None):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
@@ -521,7 +527,11 @@ def admin_page():
                         st.markdown("**【學歷】**")
                         for x in range(1, 4):
                             s = target.get(f'edu_{x}_school')
-                            if s: st.write(f"**{x}.** {s} | {target.get(f'edu_{x}_major')} | {target.get(f'edu_{x}_degree')} | {target.get(f'edu_{x}_state')}")
+                            if s: 
+                                # [修正] 加入日期顯示
+                                date_range = f"{target.get(f'edu_{x}_start','')} ~ {target.get(f'edu_{x}_end','')}"
+                                st.write(f"**{x}. {s}** ({date_range})")
+                                st.write(f"   {target.get(f'edu_{x}_major')} | {target.get(f'edu_{x}_degree')} | {target.get(f'edu_{x}_state')}")                        
                         
                         st.markdown("**【工作經歷】**")
                         for x in range(1, 5):
@@ -789,10 +799,12 @@ def candidate_page():
 
         c_s, c_d = st.columns(2)
         
+        # 收集資料
         form_data = {
             'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': dob, 'address': addr,
-            'skills': skills, 'self_intro': intro
+            'skills': skills, 'self_intro': intro,'marital_status' :marital_status
         }
+        # 自動收集 Session State
         for k in st.session_state:
             if isinstance(k, str) and k not in ['user', 'logged_in']: form_data[k] = st.session_state[k]
         
@@ -833,6 +845,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
