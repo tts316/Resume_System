@@ -460,6 +460,7 @@ def admin_page():
         df_users = sys.get_df("users")
         
         if not df_resumes.empty and not df_users.empty:
+            # 權限過濾邏輯：僅顯示 creator_email 等於當前登入者 email 的面試者
             my_candidates = df_users[df_users['creator_email'] == user['email']]['email'].tolist()
             submitted = df_resumes[
                 (df_resumes['status'].isin(['Submitted', 'Approved', 'Returned'])) & 
@@ -472,19 +473,20 @@ def admin_page():
                 if sel_email:
                     target = df_resumes[df_resumes['email'] == sel_email].iloc[0]
                     st.divider()
-                    st.markdown(f"### 📄 {target['name_cn']} 履歷表")
+                    st.markdown(f"### 📄 {target.get('name_cn','')} 履歷表")
                     
-                    if target['status'] == "Approved":
+                    if target.get('status','') == "Approved":
                         pdf_data = generate_pdf(target.to_dict())
-                        st.download_button("📥 下載完整 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
+                        st.download_button("📥 下載完整 PDF", pdf_data, f"{target.get('name_cn','')}_履歷.pdf", "application/pdf")
 
                     with st.expander("查看履歷詳細內容", expanded=True):
+                        # 基本資料
                         st.markdown("**【基本資料】**")
                         c1, c2, c3, c4 = st.columns(4)
-                        c1.write(f"**姓名**: {target['name_cn']} ({target.get('name_en', '')})")
-                        c2.write(f"**電話**: {target['phone']} / {target.get('home_phone', '')}")
-                        c3.write(f"**Email**: {target['email']}")
-                        c4.write(f"**生日**: {target['dob']}")
+                        c1.write(f"**姓名**: {target.get('name_cn','')} ({target.get('name_en', '')})")
+                        c2.write(f"**電話**: {target.get('phone','')} / {target.get('home_phone', '')}")
+                        c3.write(f"**Email**: {target.get('email','')}")
+                        c4.write(f"**生日**: {target.get('dob','')}")
                         
                         st.markdown("**【學歷】**")
                         for x in range(1, 4):
@@ -494,7 +496,6 @@ def admin_page():
                                 st.write(f"**{x}. {s}** ({date_range}) | {target.get(f'edu_{x}_major', '')} | {target.get(f'edu_{x}_degree', '')} | {target.get(f'edu_{x}_state', '')}")
                         
                         st.markdown("**【工作經歷】**")
-                        # [修正] 經歷顯示邏輯，確保欄位對應正確
                         for x in range(1, 5):
                             co = target.get(f'exp_{x}_co')
                             if co: 
@@ -504,48 +505,40 @@ def admin_page():
                                 st.write(f"- 主管: {target.get(f'exp_{x}_boss', '')} ({target.get(f'exp_{x}_phone', '')}) | 離職: {target.get(f'exp_{x}_reason', '')}")
                                 st.divider()
 
-                        # [修正] 其他資訊顯示欄位
                         st.markdown("**【其他資訊】**")
-                        c_o1, c_o2 = st.columns(2)
-                        c_o1.write(f"應徵管道: {target.get('source', '')}")
-                        c_o2.write(f"任職親友: {target.get('relative_name', '')}")
-                        
-                        c_o3, c_o4, c_o5 = st.columns(3)
-                        c_o3.write(f"補教經驗: {target.get('teach_exp', '')}")
-                        c_o4.write(f"出國史: {target.get('travel_history', '')}")
-                        c_o5.write(f"兵役狀況: {target.get('military_status', '')}")
-                        
-                        c_o6, c_o7 = st.columns(2)
-                        c_o6.write(f"住院史: {target.get('hospitalization', '')}")
-                        c_o7.write(f"慢性病: {target.get('chronic_disease', '')}")
-                        
-                        c_o8, c_o9 = st.columns(2)
-                        c_o8.write(f"獨力扶養: {target.get('family_support', '')}")
-                        c_o9.write(f"獨力負擔: {target.get('family_debt', '')}")
+                        co1, co2 = st.columns(2)
+                        co1.write(f"應徵管道: {target.get('source', '')}")
+                        co2.write(f"任職親友: {target.get('relative_name', '')}")
+                        co3, co4, co5 = st.columns(3)
+                        co3.write(f"補教經驗: {target.get('teach_exp', '')}")
+                        co4.write(f"出國史: {target.get('travel_history', '')}")
+                        co5.write(f"兵役狀況: {target.get('military_status', '')}")
+                        co6, co7 = st.columns(2)
+                        co6.write(f"住院史: {target.get('hospitalization', '')}")
+                        co7.write(f"慢性病: {target.get('chronic_disease', '')}")
+                        co8, co9 = st.columns(2)
+                        co8.write(f"獨力扶養: {target.get('family_support', '')}")
+                        co9.write(f"獨力負擔: {target.get('family_debt', '')}")
 
                         st.markdown("**【技能與自傳】**")
                         st.write(f"**專業技能**: {target.get('skills', '')}")
-                        st.text_area("自傳內容", value=target.get('self_intro', ''), disabled=True, height=200)
+                        st.text_area("自傳全文", value=target.get('self_intro', ''), disabled=True, height=200)
 
                     st.write("#### 審核操作")
                     cmt = st.text_input("評語", value=target.get('hr_comment', ''))
                     c_ok, c_no = st.columns(2)
-                    
                     if c_ok.button("✅ 核准 (發送通知)", key="ok"):
                         details = {'hr_comment': cmt, 'interview_date': str(date.today())}
                         sys.hr_update_status(sel_email, "Approved", details)
                         send_email(sel_email, "【聯成電腦】履歷審核通過", f"恭喜，您的履歷已通過審核。\nHR 留言：{cmt}")
                         st.success("已核准"); time.sleep(1); st.rerun()
-
                     if c_no.button("↩️ 退件 (通知修改)", key="no"):
                         details = {'hr_comment': cmt}
                         sys.hr_update_status(sel_email, "Returned", details)
                         send_email(sel_email, "【聯成電腦】履歷需修改通知", f"您的履歷被退回。\n原因：{cmt}")
                         st.warning("已退件"); time.sleep(1); st.rerun()
-            else:
-                st.info("目前無您所發送的面試邀請待審核")
-        else:
-            st.info("無履歷數據")
+            else: st.info("目前無您所發送的面試邀請待審核")
+        else: st.info("無履歷數據")
 
     if user['role'] == 'admin':
         with current_tab[2]:
@@ -716,4 +709,5 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
