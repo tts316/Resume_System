@@ -175,11 +175,11 @@ class ResumeDB:
 
     def get_logo(self):
         try:
-            # 修改讀取方式，確保能抓到值
+            # 修改讀取邏輯，確保抓取到設定表的值
             data = self.ws_settings.get_all_values()
             for row in data:
-                if len(row) >= 2 and row[0].strip().lower() == "logo":
-                    return row[1].strip()
+                if len(row) >= 2 and str(row[0]).strip().lower() == "logo":
+                    return str(row[1]).strip()
         except: pass
         return None
 
@@ -372,11 +372,11 @@ def generate_pdf(data):
 # --- UI Components ---
 def render_sidebar(user):
     with st.sidebar:
-        # 修復 Logo 顯示邏輯
         try:
-            raw_logo = sys.get_logo()
-            if raw_logo:
-                logo_str = str(raw_logo).strip()
+            # 修正 Logo 側邊欄顯示
+            logo_val = sys.get_logo()
+            if logo_val:
+                logo_str = str(logo_val).strip()
                 if logo_str.startswith("http"):
                     st.image(logo_str, use_container_width=True)
                 elif "base64," in logo_str:
@@ -483,7 +483,7 @@ def admin_page():
                         st.download_button("📥 下載完整 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
 
                     with st.expander("查看履歷詳細內容", expanded=True):
-                        # [修正] 完整欄位顯示
+                        # 完整欄位顯示
                         st.markdown("**【基本資料】**")
                         c1, c2, c3, c4 = st.columns(4)
                         c1.write(f"**姓名**: {target['name_cn']} ({target.get('name_en')})")
@@ -616,7 +616,7 @@ def candidate_page():
             
             try: dval = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
             except: dval = date(1995,1,1)
-            # [修正] 生日年份擴大至 1900
+            # 生日年份擴大至 1900
             dob = c1.date_input("生日", value=dval, min_value=date(1900, 1, 1), key='dob')
             addr = st.text_input("通訊地址", value=my_resume['address'], key='address')
             
@@ -627,13 +627,13 @@ def candidate_page():
             b_type_val = my_resume.get('blood_type', 'O')
             c3.selectbox("血型", ["O", "A", "B", "AB"], index=["O", "A", "B", "AB"].index(b_type_val) if b_type_val in ["O", "A", "B", "AB"] else 0, key="blood_type")
 
-        # 學歷 (修正: 增加 key 來觸發 session_state 寫入)
+        # 學歷
         with st.container(border=True):
             st.caption("學歷 (請填寫最高及次高學歷)")
             for i in range(1, 4):
                 st.markdown(f"**學歷 {i}**")
                 
-                # [修正] 增加日期輸入框
+                # 增加日期輸入框
                 c_d1, c_d2 = st.columns(2)
                 st.session_state[f'edu_{i}_start'] = c_d1.text_input(f"入學 (YYYY/MM)", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in')
                 st.session_state[f'edu_{i}_end'] = c_d2.text_input(f"畢/肄業 (YYYY/MM)", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in')
@@ -648,7 +648,7 @@ def candidate_page():
                 st.session_state[f'edu_{i}_degree'] = rc3.selectbox(f"學位 {i}", d_opts, index=d_idx, key=f'edu_{i}_degree_in')
                 
                 s_val = my_resume.get(f'edu_{i}_state', '畢業')
-                s_idx = 0 if s_val != "畢業" else 1 # 原邏輯修正
+                s_idx = 0 if s_val != "畢業" else 1 
                 st.session_state[f'edu_{i}_state'] = rc4.radio(f"狀態 {i}", ["畢業", "肄業"], index=1 if s_val=="肄業" else 0, horizontal=True, key=f'edu_{i}_state_in')
                 
                 if i < 3: st.divider()
@@ -679,6 +679,11 @@ def candidate_page():
         shift_val = ""
         rot_val = ""
         region = ""
+        holiday_shift = ""
+        rotate_shift = ""
+        family_support_shift = ""
+        care_dependent = ""
+        financial_burden = ""
         
         if r_type == "Branch":
             with st.container(border=True):
@@ -722,13 +727,20 @@ def candidate_page():
                 st.divider()
                 def get_yn_idx(v): return 0 if v in ["可以", "同意", "需要"] else 1
                 c_h1, c_h2 = st.columns(2)
-                st.session_state['holiday_shift'] = c_h1.radio("國定假日輪值？", ["可以", "不可以"], index=get_yn_idx(my_resume.get('holiday_shift')), horizontal=True, key='holiday_shift')
-                st.session_state['rotate_shift'] = c_h2.radio("配合輪早晚班？", ["可以", "不可以"], index=get_yn_idx(my_resume.get('rotate_shift')), horizontal=True, key='rotate_shift')
+                st.session_state['holiday_shift'] = c_h1.radio("國定假日輪值？", ["可以", "不可以"], index=get_yn_idx(my_resume.get('holiday_shift')), horizontal=True, key='holiday_shift_in')
+                st.session_state['rotate_shift'] = c_h2.radio("配合輪早晚班？", ["可以", "不可以"], index=get_yn_idx(my_resume.get('rotate_shift')), horizontal=True, key='rotate_shift_in')
                 c_f1, c_f2 = st.columns(2)
-                st.session_state['family_support_shift'] = c_f1.radio("家人同意輪班？", ["同意", "不同意"], index=get_yn_idx(my_resume.get('family_support_shift')), horizontal=True, key='family_support_shift')
+                st.session_state['family_support_shift'] = c_f1.radio("家人同意輪班？", ["同意", "不同意"], index=get_yn_idx(my_resume.get('family_support_shift')), horizontal=True, key='family_support_shift_in')
                 c_d1, c_d2 = st.columns(2)
-                st.session_state['care_dependent'] = c_d1.radio("需獨力扶養長幼？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('care_dependent')), horizontal=True, key='care_dependent')
-                st.session_state['financial_burden'] = c_d2.radio("需獨力負擔家計？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('financial_burden')), horizontal=True, key='financial_burden')
+                st.session_state['care_dependent'] = c_d1.radio("需獨力扶養長幼？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('care_dependent')), horizontal=True, key='care_dependent_in')
+                st.session_state['financial_burden'] = c_d2.radio("需獨力負擔家計？", ["需要", "不需要"], index=get_yn_idx(my_resume.get('financial_burden')), horizontal=True, key='financial_burden_in')
+                
+                # 賦值給局部變數，確保字典能讀取到
+                holiday_shift = st.session_state['holiday_shift']
+                rotate_shift = st.session_state['rotate_shift']
+                family_support_shift = st.session_state['family_support_shift']
+                care_dependent = st.session_state['care_dependent']
+                financial_burden = st.session_state['financial_burden']
 
         with st.container(border=True):
             st.caption("其他資訊")
@@ -757,52 +769,35 @@ def candidate_page():
 
         c_s, c_d = st.columns(2)
         
-        # --- [修正點] 修復變數未定義錯誤 ---
-        # 這裡原本引用了未定義變數 m_status 與 b_type_val，現改為正確從 session_state 或 selectbox key 獲取
+        # 收集資料
+        # [修正] 修正 NameError：引用未定義變數 m_status 與 b_type_val
         form_data = {
-            'name_cn': n_cn, 
-            'name_en': n_en, 
-            'phone': phone, 
-            'dob': str(dob), # 轉為字串
-            'address': addr,
-            'skills': skills, 
-            'self_intro': intro,
-            'marital_status': st.session_state.get('marital_status', '未婚'),
+            'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': str(dob), 'address': addr,
+            'skills': skills, 'self_intro': intro,
+            'marital_status': st.session_state.get('marital_status', '未婚'), 
             'blood_type': st.session_state.get('blood_type', 'O'),
-            'shift_avail': shift_val,
-            'holiday_shift': st.session_state.get('holiday_shift', ''),
-            'rotate_shift': st.session_state.get('rotate_shift', ''),
-            'family_support_shift': st.session_state.get('family_support_shift', ''),
-            'care_dependent': st.session_state.get('care_dependent', ''),
-            'financial_burden': st.session_state.get('financial_burden', '')
+            'shift_avail': shift_val, 'holiday_shift': holiday_shift, 'rotate_shift': rotate_shift,
+            'family_support_shift': family_support_shift, 'care_dependent': care_dependent, 'financial_burden': financial_burden
         }
-        
-        # 自動抓取所有動態 key (學歷與經歷)
         for k in st.session_state:
             if isinstance(k, str) and k.endswith("_in"):
-                # 將 edu_1_school_in 對應到 edu_1_school
-                db_key = k[:-3]
-                form_data[db_key] = st.session_state[k]
+                form_data[k[:-3]] = st.session_state[k]
         
         if r_type == "Branch":
             form_data['branch_region'] = region
             form_data['branch_location'] = loc_val
             form_data['accept_rotation'] = rot_val
 
-        # 這裡確保 Submit Button 存在且邏輯正常
         if c_s.form_submit_button("💾 暫存"):
             sys.save_resume(user['email'], form_data, "Draft")
             st.success("已暫存"); time.sleep(1); st.rerun()
             
         if c_d.form_submit_button("🚀 送出"):
-            # 檢查必填
             edu1_chk = st.session_state.get('edu_1_school_in', '')
-            if not n_cn or not phone: 
-                st.error("姓名與電話為必填")
-            elif not edu1_chk: 
-                st.error("⚠️ 請至少填寫一個「學歷 (學歷1)」")
-            elif r_type == "Branch" and rot_val=="是" and "輪調" not in loc_val: 
-                st.error("請勾選可配合輪調的分校")
+            
+            if not n_cn or not phone: st.error("姓名與電話為必填")
+            elif not edu1_chk: st.error("⚠️ 請至少填寫一個「學歷 (學歷1)」")
+            elif r_type == "Branch" and rot_val=="是" and "輪調" not in loc_val: st.error("請勾選可配合輪調的分校")
             else:
                 sys.save_resume(user['email'], form_data, "Submitted")
                 hr = user.get('creator', '')
