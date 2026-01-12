@@ -480,7 +480,7 @@ def admin_page():
                         st.download_button("📥 下載完整 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
 
                     with st.expander("查看履歷詳細內容", expanded=True):
-st.markdown("**【基本資料】**")
+                        st.markdown("**【基本資料】**")
                         c1, c2, c3, c4 = st.columns(4)
                         c1.write(f"**姓名**: {target.get('name_cn','')} ({target.get('name_en', '')})")
                         c2.write(f"**電話**: {target.get('phone','')} / {target.get('home_phone', '')}")
@@ -796,5 +796,6 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
