@@ -249,10 +249,11 @@ def generate_pdf(data):
         ('PADDING', (0,0), (-1,-1), 6),
     ])
 
+# 1. 基本資料表格內容修正
     p_data = [
         ["姓名", f"{data.get('name_cn','')} ({data.get('name_en','')})", "應徵職務", "一般人員"],
         ["Email", data.get('email',''), "電話", f"{data.get('phone','')} / {data.get('home_phone','')}"],
-        ["生日", data.get('dob',''), "婚姻/血型", f"{data.get('marital_status','')} / {data.get('blood_type','')}"],
+        ["生日", data.get('dob',''), "婚姻/血型", f"{target.get('marital_status','')} / {target.get('blood_type','')}"],
         ["地址", data.get('address',''), "緊急聯絡", f"{data.get('emergency_contact','')} ({data.get('emergency_phone','')})"],
         ["身高/體重", f"{data.get('height','')} cm / {data.get('weight','')} kg", "交通", f"{data.get('commute_method','')} ({data.get('commute_time','')}分)"]
     ]
@@ -479,12 +480,25 @@ def admin_page():
                         st.download_button("📥 下載完整 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
 
                     with st.expander("查看履歷詳細內容", expanded=True):
-                        st.markdown("**【基本資料】**")
+st.markdown("**【基本資料】**")
                         c1, c2, c3, c4 = st.columns(4)
-                        c1.write(f"**姓名**: {target['name_cn']} ({target.get('name_en', '')})")
-                        c2.write(f"**電話**: {target['phone']} / {target.get('home_phone', '')}")
-                        c3.write(f"**Email**: {target['email']}")
-                        c4.write(f"**生日**: {target['dob']}")
+                        c1.write(f"**姓名**: {target.get('name_cn','')} ({target.get('name_en', '')})")
+                        c2.write(f"**電話**: {target.get('phone','')} / {target.get('home_phone', '')}")
+                        c3.write(f"**Email**: {target.get('email','')}")
+                        c4.write(f"**生日**: {target.get('dob','')}")
+                        
+                        # 新增顯示欄位
+                        c5, c6, c7, c8 = st.columns(4)
+                        c5.write(f"**身高**: {target.get('height','')} cm")
+                        c6.write(f"**體重**: {target.get('weight','')} kg")
+                        c7.write(f"**血型**: {target.get('blood_type','')}")
+                        c8.write(f"**婚姻**: {target.get('marital_status','')}")
+                        
+                        st.write(f"**通訊地址**: {target.get('address','')}")
+                        
+                        c9, c10 = st.columns(2)
+                        c9.write(f"**緊急聯絡人**: {target.get('emergency_contact','')} ({target.get('emergency_phone','')})")
+                        c10.write(f"**交通方式**: {target.get('commute_method','')} (約 {target.get('commute_time','')} 分鐘)")
                         
                         st.markdown("**【學歷】**")
                         for x in range(1, 4):
@@ -528,15 +542,48 @@ def admin_page():
                     st.write(f"**技能**: {target.get('skills', '')}")
                     st.text_area("自傳全文", value=target.get('self_intro', ''), disabled=True, height=150)
 
-                    st.write("#### 審核操作")
-                    cmt = st.text_input("評語", value=target.get('hr_comment', ''))
-                    c_ok, c_no = st.columns(2)
+st.write("#### 審核操作")
+                    # 新增面試詳細資訊輸入欄位
+                    c_iv1, c_iv2 = st.columns(2)
+                    iv_time = c_iv1.text_input("📅 面試時間", value=target.get('interview_time', ''))
+                    iv_loc = c_iv2.text_input("📍 面試地點", value=target.get('interview_location', ''))
                     
+                    c_iv3, c_iv4 = st.columns(2)
+                    iv_dept = c_iv3.text_input("🏢 面試部門", value=target.get('interview_dept', ''))
+                    iv_man = c_iv4.text_input("👤 面試主管", value=target.get('interview_manager', ''))
+                    
+                    iv_notes = st.text_area("⚠️ 面試注意事項", value=target.get('interview_notes', ''))
+                    cmt = st.text_input("💬 HR 評語/留言", value=target.get('hr_comment', ''))
+
+                    c_ok, c_no = st.columns(2)
                     if c_ok.button("✅ 核准 (發送通知)", key="ok"):
-                        details = {'hr_comment': cmt, 'interview_date': str(date.today())}
+                        # 完整的細節字典
+                        details = {
+                            'hr_comment': cmt,
+                            'interview_date': str(date.today()),
+                            'interview_time': iv_time,
+                            'interview_location': iv_loc,
+                            'interview_dept': iv_dept,
+                            'interview_manager': iv_man,
+                            'interview_notes': iv_notes
+                        }
                         sys.hr_update_status(sel_email, "Approved", details)
-                        send_email(sel_email, "【聯成電腦】履歷審核通過", f"恭喜，您的履歷已通過審核。\nHR 留言：{cmt}")
-                        st.success("已核准"); time.sleep(1); st.rerun()
+                        
+                        # 構建包含詳細資訊的 Email 內容
+                        mail_body = f"""您好，您的履歷已通過初步審核。
+以下是您的面試資訊：
+📅 日期：{date.today()}
+⏰ 時間：{iv_time}
+📍 地點：{iv_loc}
+🏢 部門：{iv_dept}
+👤 主管：{iv_man}
+⚠️ 注意事項：{iv_notes}
+
+HR 留言：{cmt}
+請準時參加面試，謝謝。"""
+                        
+                        send_email(sel_email, "【聯成電腦】面試邀約通知", mail_body)
+                        st.success("已核准並發送詳細通知"); time.sleep(1); st.rerun()
 
                     if c_no.button("↩️ 退件 (通知修改)", key="no"):
                         details = {'hr_comment': cmt}
@@ -749,4 +796,5 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
