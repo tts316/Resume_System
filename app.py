@@ -542,7 +542,7 @@ def admin_page():
                     st.write(f"**技能**: {target.get('skills', '')}")
                     st.text_area("自傳全文", value=target.get('self_intro', ''), disabled=True, height=150)
 
-st.write("#### 審核操作")
+                    st.write("#### 審核操作")
                     # 新增面試詳細資訊輸入欄位
                     c_iv1, c_iv2 = st.columns(2)
                     iv_time = c_iv1.text_input("📅 面試時間", value=target.get('interview_time', ''))
@@ -571,17 +571,17 @@ st.write("#### 審核操作")
                         
                         # 構建包含詳細資訊的 Email 內容
                         mail_body = f"""您好，您的履歷已通過初步審核。
-以下是您的面試資訊：
-📅 日期：{date.today()}
-⏰ 時間：{iv_time}
-📍 地點：{iv_loc}
-🏢 部門：{iv_dept}
-👤 主管：{iv_man}
-⚠️ 注意事項：{iv_notes}
-
-HR 留言：{cmt}
-請準時參加面試，謝謝。"""
-                        
+                                    以下是您的面試資訊：
+                                    📅 日期：{date.today()}
+                                    ⏰ 時間：{iv_time}
+                                    📍 地點：{iv_loc}
+                                    🏢 部門：{iv_dept}
+                                    👤 主管：{iv_man}
+                                    ⚠️ 注意事項：{iv_notes}
+                                    
+                                    HR 留言：{cmt}
+                                    請準時參加面試，謝謝。"""
+                                                            
                         send_email(sel_email, "【聯成電腦】面試邀約通知", mail_body)
                         st.success("已核准並發送詳細通知"); time.sleep(1); st.rerun()
 
@@ -796,6 +796,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
