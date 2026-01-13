@@ -163,7 +163,7 @@ def save_resume(self, email, data, status="Draft"):
             return False, "找不到對應的 Email"
         except Exception as e:
             return False, f"API 寫入錯誤: {str(e)}"
-            
+
     def hr_update_status(self, email, status, details=None):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
