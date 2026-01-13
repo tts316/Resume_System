@@ -264,11 +264,11 @@ def generate_pdf(data):
         ('PADDING', (0,0), (-1,-1), 6),
     ])
 
-# 1. 基本資料表格內容修正
+# 1. 基本資料表格修正 (將 target 替換為 data)
     p_data = [
         ["姓名", f"{data.get('name_cn','')} ({data.get('name_en','')})", "應徵職務", "一般人員"],
         ["Email", data.get('email',''), "電話", f"{data.get('phone','')} / {data.get('home_phone','')}"],
-        ["生日", data.get('dob',''), "婚姻/血型", f"{target.get('marital_status','')} / {target.get('blood_type','')}"],
+        ["生日", data.get('dob',''), "婚姻/血型", f"{data.get('marital_status','')} / {data.get('blood_type','')}"],
         ["地址", data.get('address',''), "緊急聯絡", f"{data.get('emergency_contact','')} ({data.get('emergency_phone','')})"],
         ["身高/體重", f"{data.get('height','')} cm / {data.get('weight','')} kg", "交通", f"{data.get('commute_method','')} ({data.get('commute_time','')}分)"]
     ]
@@ -824,6 +824,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
