@@ -127,7 +127,7 @@ class ResumeDB:
             return False, "Fail"
         except Exception as e: return False, str(e)
 
-def save_resume(self, email, data, status="Draft"):
+    def save_resume(self, email, data, status="Draft"):
         try:
             # 1. 找到該使用者的列號
             cell = self.ws_resumes.find(email, in_column=1)
@@ -166,7 +166,7 @@ def save_resume(self, email, data, status="Draft"):
             return False, f"API 寫入錯誤: {str(e)}"
 
 # 確保這一行 (167行) 的 def 開頭跟上面的 def save_resume 完全垂直對齊
-def hr_update_status(self, email, status, details=None):
+    def hr_update_status(self, email, status, details=None):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
             # ... 後續程式碼 ...
@@ -188,7 +188,7 @@ def hr_update_status(self, email, status, details=None):
             return False, "Fail"
         except Exception as e: return False, str(e)
 
-def get_logo(self):
+    def get_logo(self):
         try:
             data = self.ws_settings.get_all_values()
             for row in data:
@@ -813,4 +813,5 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
