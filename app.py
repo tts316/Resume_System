@@ -156,6 +156,7 @@ def save_resume(self, email, data, status="Draft"):
                 
                 # 6. 一次性整列寫入回 Google Sheets (這只會消耗 1 次 API 配額)
                 # 使用 update 語法，範圍為 A{row}: 到最後一欄
+# ... 這是優化後的 save_resume 結尾 ...
                 range_label = f"A{row_idx}"
                 self.ws_resumes.update(range_label, [current_row_values])
                 
@@ -164,9 +165,11 @@ def save_resume(self, email, data, status="Draft"):
         except Exception as e:
             return False, f"API 寫入錯誤: {str(e)}"
 
-def hr_update_status(self, email, status, details=None):
+    # 確保這一行 (167行) 的 def 開頭跟上面的 def save_resume 完全垂直對齊
+    def hr_update_status(self, email, status, details=None):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
+            # ... 後續程式碼 ...
             if cell:
                 r = cell.row
                 headers = self.ws_resumes.row_values(1)
@@ -810,6 +813,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
