@@ -127,31 +127,43 @@ class ResumeDB:
             return False, "Fail"
         except Exception as e: return False, str(e)
 
-    def save_resume(self, email, data, status="Draft"):
+def save_resume(self, email, data, status="Draft"):
         try:
+            # 1. 找到該使用者的列號
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
-                r = cell.row
-                headers = self.ws_resumes.row_values(1)
-                headers = [h.strip().lower() for h in headers]
+                row_idx = cell.row
+                # 2. 取得標題列（第一列）來確定欄位順序
+                headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
                 
-                self.ws_resumes.update_cell(r, headers.index('status')+1, status)
+                # 3. 取得目前該列的所有內容
+                current_row_values = self.ws_resumes.row_values(row_idx)
+                # 確保長度與標題一致，避免索引錯誤
+                if len(current_row_values) < len(headers):
+                    current_row_values += [""] * (len(headers) - len(current_row_values))
                 
+                # 4. 更新狀態
+                if 'status' in headers:
+                    current_row_values[headers.index('status')] = status
+                
+                # 5. 將 data 中的資料填入對應的欄位位置
                 for key, val in data.items():
-                    # 清洗 Key：如果 key 是 'edu_1_school_in' -> 變成 'edu_1_school'
-                    clean_key = key.lower()
-                    if clean_key.endswith("_in"):
-                        clean_key = clean_key[:-3] # 去掉最後3個字 (_in)
-                    
+                    clean_key = key.lower().strip()
                     if clean_key in headers:
-                        col_idx = headers.index(clean_key) + 1
-                        if isinstance(val, (date, datetime)):
-                            val = str(val)
-                        self.ws_resumes.update_cell(r, col_idx, val)
+                        col_idx = headers.index(clean_key)
+                        # 將日期或特殊物件轉為字串
+                        current_row_values[col_idx] = str(val) if val is not None else ""
+                
+                # 6. 一次性整列寫入回 Google Sheets (這只會消耗 1 次 API 配額)
+                # 使用 update 語法，範圍為 A{row}: 到最後一欄
+                range_label = f"A{row_idx}"
+                self.ws_resumes.update(range_label, [current_row_values])
+                
                 return True, "儲存成功"
-            return False, "No Data"
-        except Exception as e: return False, str(e)
-
+            return False, "找不到對應的 Email"
+        except Exception as e:
+            return False, f"API 寫入錯誤: {str(e)}"
+            
     def hr_update_status(self, email, status, details=None):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
@@ -798,6 +810,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
