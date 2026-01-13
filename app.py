@@ -524,14 +524,14 @@ def admin_page():
              
                         st.markdown("**【工作經歷】**")
                         for x in range(1, 5):
-                            # 確保 key 為全小寫 exp_x_co
-                            co = target.get(f'exp_{x}_co') 
-                            if co: 
-                                s_start = target.get(f'exp_{x}_start', '')
-                                s_end = target.get(f'exp_{x}_end', '')
-                                st.markdown(f"**{x}. {co}** ({s_start} ~ {s_end})")
-                                st.write(f"- 職稱: {target.get(f'exp_{x}_title', '')} | 薪資: {target.get(f'exp_{x}_salary', '')}")
-                                st.write(f"- 主管: {target.get(f'exp_{x}_boss', '')} ({target.get(f'exp_{x}_phone', '')}) | 離職: {target.get(f'exp_{x}_reason', '')}")
+                            # 讀取公司名稱並去掉首尾空白
+                            co = str(target.get(f'exp_{x}_co', '')).strip()
+                            # 只有當公司名稱不是空值，且不是 "None" 時才顯示該區塊
+                            if co and co.lower() != 'none' and co != "":
+                                dr = f"{target.get(f'exp_{x}_start','')} ~ {target.get(f'exp_{x}_end','')}"
+                                st.markdown(f"**{x}. {co}** ({dr})")
+                                st.write(f"- 職稱: {target.get(f'exp_{x}_title','')} | 薪資: {target.get(f'exp_{x}_salary','')}")
+                                st.write(f"- 主管: {target.get(f'exp_{x}_boss','')} ({target.get(f'exp_{x}_phone','')}) | 原因: {target.get(f'exp_{x}_reason','')}")
                                 st.divider()
 
                         # [修正] 其他資訊顯示欄位
@@ -632,15 +632,20 @@ def candidate_page():
     status = my_resume.get('status', 'New')
     r_type = my_resume.get('resume_type', 'HQ') 
 
-    if status == "Approved": 
-        st.balloons(); st.success("🎉 恭喜！您的履歷已審核通過。")
-        with st.expander("查看面試資訊", expanded=True):
-            st.write(f"📅 日期: {my_resume.get('interview_date','')}")
-            st.write(f"⏰ 時間: {my_resume.get('interview_time','')}")
-            st.write(f"📍 地點: {my_resume.get('interview_location','')}")
-            st.write(f"⚠️ 注意: {my_resume.get('interview_notes','')}")
-        return
+# 這裡判斷狀態
+    is_approved = (status == "Approved")
+
+    if is_approved: 
+        st.balloons()
+        st.success("🎉 恭喜！您的履歷已審核通過。")
+        with st.expander("📅 查看面試資訊", expanded=True):
+            st.write(f"**面試日期**: {my_resume.get('interview_date','')}")
+            st.write(f"**面試時間**: {my_resume.get('interview_time','')}")
+            st.write(f"**面試地點**: {my_resume.get('interview_location','')}")
+            st.write(f"**注意事項**: {my_resume.get('interview_notes','')}")
+        # 注意：這裡不要放 return，讓程式繼續往下跑以顯示履歷內容
     
+    # ... 接下來是原有的 if status == "Submitted" 等提示 ...    
     if status == "Submitted":
         st.info("ℹ️ 履歷審核中，若需補充資料可修改後再次送出。")
     elif status == "Returned":
@@ -813,5 +818,6 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
