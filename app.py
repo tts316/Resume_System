@@ -197,7 +197,7 @@ def get_logo(self):
         except: pass
         return None
 
-def update_logo(self, base64_str):
+    def update_logo(self, base64_str):
         try:
             try: cell = self.ws_settings.find("logo", in_column=1)
             except: time.sleep(1); cell = self.ws_settings.find("logo", in_column=1)
@@ -813,3 +813,4 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
