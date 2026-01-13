@@ -66,9 +66,9 @@ class ResumeDB:
             "users": ["email", "password", "name", "role", "creator_email", "created_at"],
             "resumes": [
                 "email", "status", "name_cn", "name_en", "phone", "address", "dob", 
-                "edu_1_school", "edu_1_major", "edu_1_degree", "edu_1_state", "edu_1_start", "edu_1_end",
-                "edu_2_school", "edu_2_major", "edu_2_degree", "edu_2_state", "edu_2_start", "edu_2_end",
-                "edu_3_school", "edu_3_major", "edu_3_degree", "edu_3_state", "edu_3_start", "edu_3_end",
+                "edu_1_school", "edu_1_major", "edu_1_degree", "edu_1_state",
+                "edu_2_school", "edu_2_major", "edu_2_degree", "edu_2_state",
+                "edu_3_school", "edu_3_major", "edu_3_degree", "edu_3_state",
                 "exp_1_start", "exp_1_end", "exp_1_co", "exp_1_title", "exp_1_salary", "exp_1_boss", "exp_1_phone", "exp_1_reason",
                 "exp_2_start", "exp_2_end", "exp_2_co", "exp_2_title", "exp_2_salary", "exp_2_boss", "exp_2_phone", "exp_2_reason",
                 "exp_3_start", "exp_3_end", "exp_3_co", "exp_3_title", "exp_3_salary", "exp_3_boss", "exp_3_phone", "exp_3_reason",
@@ -82,72 +82,125 @@ class ResumeDB:
             ],
             "system_settings": ["key", "value"]
         }
+        
         ws = self.ws_users if table_name == "users" else (self.ws_resumes if table_name == "resumes" else self.ws_settings)
+        
         try:
             data = ws.get_all_values()
             if len(data) < 2: return pd.DataFrame(columns=defaults[table_name])
-            headers = [str(h).strip().lower() for h in data.pop(0)]
+            headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
+            df.columns = df.columns.astype(str).str.strip().str.lower()
+            if defaults[table_name][0] not in df.columns: return pd.DataFrame(columns=defaults[table_name])
             return df
         except: return pd.DataFrame(columns=defaults.get(table_name, []))
 
     def verify_login(self, email, password):
         try:
             df = self.get_df("users")
-            user = df[df['email'].str.lower() == str(email).strip().lower()]
-            if not user.empty and str(user.iloc[0]['password']) == str(password):
+            if df.empty: return None
+            email_clean = str(email).strip().lower()
+            user = df[df['email'].astype(str).str.strip().str.lower() == email_clean]
+            if not user.empty:
                 row = user.iloc[0]
-                return {"email": row['email'], "name": row['name'], "role": row['role'], "creator": row.get('creator_email', '')}
+                if str(row['password']) == str(password):
+                    return {"email": row['email'], "name": row['name'], "role": row['role'], "creator": row.get('creator_email', '')}
             return None
         except: return None
 
-    def save_resume(self, email, data, status="Draft"):
+    def create_user(self, creator_email, email, name, role, r_type=""):
         try:
-            cell = self.ws_resumes.find(email, in_column=1)
-            if cell:
-                row_idx = cell.row
-                headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
-                current_values = self.ws_resumes.row_values(row_idx)
-                if len(current_values) < len(headers): current_values += [""] * (len(headers) - len(current_values))
-                if 'status' in headers: current_values[headers.index('status')] = status
-                for key, val in data.items():
-                    clean_key = key.lower().strip()
-                    if clean_key in headers: current_values[headers.index(clean_key)] = str(val) if val else ""
-                self.ws_resumes.update(f"A{row_idx}", [current_values])
-                return True, "儲存成功"
-            return False, "No Data"
+            df = self.get_df("users")
+            if not df.empty and str(email) in df['email'].astype(str).values: return False, "Email 已存在"
+            self.ws_users.append_row([email, email, name, role, creator_email, str(date.today())])
+            if role == "candidate":
+                # 補足 89 欄
+                row_data = [email, "New", name] + [""] * 48 + [r_type] + [""] * 37
+                self.ws_resumes.append_row(row_data)
+            return True, "建立成功"
         except Exception as e: return False, str(e)
 
-    def hr_update_status(self, email, status, details=None):
+    def change_password(self, email, new_password):
         try:
+            cell = self.ws_users.find(email, in_column=1)
+            if cell: self.ws_users.update_cell(cell.row, 2, new_password); return True, "OK"
+            return False, "Fail"
+        except Exception as e: return False, str(e)
+
+def save_resume(self, email, data, status="Draft"):
+        try:
+            # 1. 找到該使用者的列號
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
                 row_idx = cell.row
+                # 2. 取得標題列（第一列）來確定欄位順序
                 headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
-                current_values = self.ws_resumes.row_values(row_idx)
-                if len(current_values) < len(headers): current_values += [""] * (len(headers) - len(current_values))
-                if 'status' in headers: current_values[headers.index('status')] = status
+                
+                # 3. 取得目前該列的所有內容
+                current_row_values = self.ws_resumes.row_values(row_idx)
+                # 確保長度與標題一致，避免索引錯誤
+                if len(current_row_values) < len(headers):
+                    current_row_values += [""] * (len(headers) - len(current_row_values))
+                
+                # 4. 更新狀態
+                if 'status' in headers:
+                    current_row_values[headers.index('status')] = status
+                
+                # 5. 將 data 中的資料填入對應的欄位位置
+                for key, val in data.items():
+                    clean_key = key.lower().strip()
+                    if clean_key in headers:
+                        col_idx = headers.index(clean_key)
+                        # 將日期或特殊物件轉為字串
+                        current_row_values[col_idx] = str(val) if val is not None else ""
+                
+                # 6. 一次性整列寫入回 Google Sheets (這只會消耗 1 次 API 配額)
+                # 使用 update 語法，範圍為 A{row}: 到最後一欄
+# ... 這是優化後的 save_resume 結尾 ...
+                range_label = f"A{row_idx}"
+                self.ws_resumes.update(range_label, [current_row_values])
+                
+                return True, "儲存成功"
+            return False, "找不到對應的 Email"
+        except Exception as e:
+            return False, f"API 寫入錯誤: {str(e)}"
+
+# 確保這一行 (167行) 的 def 開頭跟上面的 def save_resume 完全垂直對齊
+def hr_update_status(self, email, status, details=None):
+        try:
+            cell = self.ws_resumes.find(email, in_column=1)
+            # ... 後續程式碼 ...
+            if cell:
+                r = cell.row
+                headers = self.ws_resumes.row_values(1)
+                headers = [h.strip().lower() for h in headers]
+                
+                if 'status' in headers:
+                    self.ws_resumes.update_cell(r, headers.index('status')+1, status)
+                
                 if details:
                     for k, v in details.items():
-                        if k.lower() in headers: current_values[headers.index(k.lower())] = str(v) if v else ""
-                self.ws_resumes.update(f"A{row_idx}", [current_values])
+                        if k in headers:
+                            col = headers.index(k) + 1
+                            val = str(v) if v else ""
+                            self.ws_resumes.update_cell(r, col, val)
                 return True, "OK"
             return False, "Fail"
         except Exception as e: return False, str(e)
 
-    def get_logo(self):
+def get_logo(self):
         try:
             data = self.ws_settings.get_all_values()
             for row in data:
-                if len(row) >= 2 and str(row[0]).strip().lower() == "logo":
-                    val = str(row[1]).strip()
-                    if len(val) > 10: return val
+                if len(row) >= 2 and row[0].strip().lower() == "logo":
+                    return row[1].strip()
         except: pass
         return None
 
-    def update_logo(self, base64_str):
+def update_logo(self, base64_str):
         try:
-            cell = self.ws_settings.find("logo", in_column=1)
+            try: cell = self.ws_settings.find("logo", in_column=1)
+            except: time.sleep(1); cell = self.ws_settings.find("logo", in_column=1)
             if cell: self.ws_settings.update_cell(cell.row, 2, base64_str)
             else: self.ws_settings.append_row(["logo", base64_str])
             return True
@@ -417,15 +470,17 @@ def admin_page():
                         if succ: st.success(f"PM {p_name} 建立成功")
                         else: st.error(msg)
 
-with current_tab[1]:
+    with current_tab[1]:
         st.subheader("履歷審核列表")
         df_resumes = sys.get_df("resumes")
         df_users = sys.get_df("users")
         
         if not df_resumes.empty and not df_users.empty:
-            # 權限隔離邏輯
             my_candidates = df_users[df_users['creator_email'] == user['email']]['email'].tolist()
-            submitted = df_resumes[(df_resumes['status'].isin(['Submitted', 'Approved', 'Returned'])) & (df_resumes['email'].isin(my_candidates))].copy()
+            submitted = df_resumes[
+                (df_resumes['status'].isin(['Submitted', 'Approved', 'Returned'])) & 
+                (df_resumes['email'].isin(my_candidates))
+            ].copy()
             
             if not submitted.empty:
                 st.dataframe(submitted[['status', 'name_cn', 'email', 'resume_type']])
@@ -433,11 +488,11 @@ with current_tab[1]:
                 if sel_email:
                     target = df_resumes[df_resumes['email'] == sel_email].iloc[0]
                     st.divider()
-                    st.markdown(f"### 📄 {target.get('name_cn','')} 履歷表")
+                    st.markdown(f"### 📄 {target['name_cn']} 履歷表")
                     
-                    if target.get('status','') == "Approved":
+                    if target['status'] == "Approved":
                         pdf_data = generate_pdf(target.to_dict())
-                        st.download_button("📥 下載完整 PDF", pdf_data, f"{target.get('name_cn','')}_履歷.pdf", "application/pdf")
+                        st.download_button("📥 下載完整 PDF", pdf_data, f"{target['name_cn']}_履歷.pdf", "application/pdf")
 
                     with st.expander("查看履歷詳細內容", expanded=True):
                         st.markdown("**【基本資料】**")
@@ -447,60 +502,108 @@ with current_tab[1]:
                         c3.write(f"**Email**: {target.get('email','')}")
                         c4.write(f"**生日**: {target.get('dob','')}")
                         
+                        # 新增顯示欄位
                         c5, c6, c7, c8 = st.columns(4)
                         c5.write(f"**身高**: {target.get('height','')} cm")
                         c6.write(f"**體重**: {target.get('weight','')} kg")
                         c7.write(f"**血型**: {target.get('blood_type','')}")
                         c8.write(f"**婚姻**: {target.get('marital_status','')}")
+                        
                         st.write(f"**通訊地址**: {target.get('address','')}")
-
+                        
+                        c9, c10 = st.columns(2)
+                        c9.write(f"**緊急聯絡人**: {target.get('emergency_contact','')} ({target.get('emergency_phone','')})")
+                        c10.write(f"**交通方式**: {target.get('commute_method','')} (約 {target.get('commute_time','')} 分鐘)")
+                        
                         st.markdown("**【學歷】**")
                         for x in range(1, 4):
                             s = target.get(f'edu_{x}_school')
                             if s: 
-                                dr = f"{target.get(f'edu_{x}_start','')} ~ {target.get(f'edu_{x}_end','')}"
-                                st.write(f"**{x}. {s}** ({dr}) | {target.get(f'edu_{x}_major','')} | {target.get(f'edu_{x}_degree','')} | {target.get(f'edu_{x}_state','')}")
-                        
+                                date_range = f"{target.get(f'edu_{x}_start','')} ~ {target.get(f'edu_{x}_end','')}"
+                                st.write(f"**{x}. {s}** ({date_range}) | {target.get(f'edu_{x}_major', '')} | {target.get(f'edu_{x}_degree', '')} | {target.get(f'edu_{x}_state', '')}")
+             
                         st.markdown("**【工作經歷】**")
                         for x in range(1, 5):
-                            co = target.get(f'exp_{x}_co')
+                            # 確保 key 為全小寫 exp_x_co
+                            co = target.get(f'exp_{x}_co') 
                             if co: 
-                                dr = f"{target.get(f'exp_{x}_start','')} ~ {target.get(f'exp_{x}_end','')}"
-                                st.markdown(f"**{x}. {co}** ({dr})")
-                                st.write(f"- 職稱: {target.get(f'exp_{x}_title','')} | 薪資: {target.get(f'exp_{x}_salary','')}")
-                                st.write(f"- 主管: {target.get(f'exp_{x}_boss','')} ({target.get(f'exp_{x}_phone','')}) | 原因: {target.get(f'exp_{x}_reason','')}")
+                                s_start = target.get(f'exp_{x}_start', '')
+                                s_end = target.get(f'exp_{x}_end', '')
+                                st.markdown(f"**{x}. {co}** ({s_start} ~ {s_end})")
+                                st.write(f"- 職稱: {target.get(f'exp_{x}_title', '')} | 薪資: {target.get(f'exp_{x}_salary', '')}")
+                                st.write(f"- 主管: {target.get(f'exp_{x}_boss', '')} ({target.get(f'exp_{x}_phone', '')}) | 離職: {target.get(f'exp_{x}_reason', '')}")
                                 st.divider()
 
-                        st.markdown("**【其他資訊與自傳】**")
-                        co1, co2 = st.columns(2)
-                        co1.write(f"應徵管道: {target.get('source','')}")
-                        co2.write(f"任職親友: {target.get('relative_name','')}")
-                        st.write(f"補教經驗: {target.get('teach_exp','')} | 出國史: {target.get('travel_history','')} | 兵役: {target.get('military_status','')}")
-                        st.write(f"病史: 住院({target.get('hospitalization','')}) | 慢性病({target.get('chronic_disease','')})")
-                        st.write(f"扶養: {target.get('family_support','')} | 負擔: {target.get('family_debt','')}")
-                        st.write(f"**專業技能**: {target.get('skills','')}")
-                        st.text_area("自傳內容", value=target.get('self_intro',''), disabled=True, height=200)
+                        # [修正] 其他資訊顯示欄位
+                    st.markdown("**【其他資訊】**")
+                    c_o1, c_o2 = st.columns(2)
+                    c_o1.write(f"**應徵管道**: {target.get('source', '')}")
+                    c_o2.write(f"**任職親友**: {target.get('relative_name', '')}")
+                    
+                    c_o3, c_o4, c_o5 = st.columns(3)
+                    c_o3.write(f"**補教經驗**: {target.get('teach_exp', '')}")
+                    c_o4.write(f"**出國史**: {target.get('travel_history', '')}")
+                    c_o5.write(f"**兵役狀況**: {target.get('military_status', '')}")
+                    
+                    c_o6, c_o7 = st.columns(2)
+                    c_o6.write(f"**住院史**: {target.get('hospitalization', '')}")
+                    c_o7.write(f"**慢性病**: {target.get('chronic_disease', '')}")
+                    
+                    c_o8, c_o9 = st.columns(2)
+                    c_o8.write(f"**獨力扶養**: {target.get('family_support', '')}")
+                    c_o9.write(f"**獨力負擔**: {target.get('family_debt', '')}")
+                    
+                    st.markdown("**【專業技能與自傳】**")
+                    st.write(f"**技能**: {target.get('skills', '')}")
+                    st.text_area("自傳全文", value=target.get('self_intro', ''), disabled=True, height=150)
 
                     st.write("#### 審核操作")
+                    # 新增面試詳細資訊輸入欄位
                     c_iv1, c_iv2 = st.columns(2)
                     iv_time = c_iv1.text_input("📅 面試時間", value=target.get('interview_time', ''))
                     iv_loc = c_iv2.text_input("📍 面試地點", value=target.get('interview_location', ''))
+                    
                     c_iv3, c_iv4 = st.columns(2)
                     iv_dept = c_iv3.text_input("🏢 面試部門", value=target.get('interview_dept', ''))
                     iv_man = c_iv4.text_input("👤 面試主管", value=target.get('interview_manager', ''))
-                    iv_notes = st.text_area("⚠️ 面試注意事項", value=target.get('interview_notes', ''))
-                    cmt = st.text_input("評語", value=target.get('hr_comment',''))
                     
+                    iv_notes = st.text_area("⚠️ 面試注意事項", value=target.get('interview_notes', ''))
+                    cmt = st.text_input("💬 HR 評語/留言", value=target.get('hr_comment', ''))
+
                     c_ok, c_no = st.columns(2)
                     if c_ok.button("✅ 核准 (發送通知)", key="ok"):
-                        details = {'hr_comment': cmt, 'interview_date': str(date.today()), 'interview_time': iv_time, 'interview_location': iv_loc, 'interview_dept': iv_dept, 'interview_manager': iv_man, 'interview_notes': iv_notes}
+                        # 完整的細節字典
+                        details = {
+                            'hr_comment': cmt,
+                            'interview_date': str(date.today()),
+                            'interview_time': iv_time,
+                            'interview_location': iv_loc,
+                            'interview_dept': iv_dept,
+                            'interview_manager': iv_man,
+                            'interview_notes': iv_notes
+                        }
                         sys.hr_update_status(sel_email, "Approved", details)
-                        body = f"您好，您的履歷已通過審核。\n面試時間：{iv_time}\n面試地點：{iv_loc}\n部門：{iv_dept}\n主管：{iv_man}\n注意事項：{iv_notes}\n\nHR 留言：{cmt}"
-                        send_email(sel_email, "【聯成電腦】面試邀約通知", body)
-                        st.success("已核准並發信"); time.sleep(1); st.rerun()
+                        
+                        # 構建包含詳細資訊的 Email 內容
+                        mail_body = f"""您好，您的履歷已通過初步審核。
+                                    以下是您的面試資訊：
+                                    📅 日期：{date.today()}
+                                    ⏰ 時間：{iv_time}
+                                    📍 地點：{iv_loc}
+                                    🏢 部門：{iv_dept}
+                                    👤 主管：{iv_man}
+                                    ⚠️ 注意事項：{iv_notes}
+                                    
+                                    HR 留言：{cmt}
+                                    請準時參加面試，謝謝。"""
+                                                            
+                        send_email(sel_email, "【聯成電腦】面試邀約通知", mail_body)
+                        st.success("已核准並發送詳細通知"); time.sleep(1); st.rerun()
+
                     if c_no.button("↩️ 退件 (通知修改)", key="no"):
-                        sys.hr_update_status(sel_email, "Returned", {'hr_comment': cmt})
-                        send_email(sel_email, "【聯成電腦】履歷需修改通知", f"原因：{cmt}")
+                        details = {'hr_comment': cmt}
+                        sys.hr_update_status(sel_email, "Returned", details)
+                        send_email(sel_email, "【聯成電腦】履歷需修改通知", f"您的履歷被退回。\n原因：{cmt}")
                         st.warning("已退件"); time.sleep(1); st.rerun()
             else:
                 st.info("目前無您所發送的面試邀請待審核")
@@ -659,23 +762,26 @@ def candidate_page():
             intro = st.text_area("自傳 / 工作成就", value=my_resume.get('self_intro', ''), height=150, key='self_intro_in')
 
         # 按鈕區
-c_s, c_d = st.columns(2)
+        c_s, c_d = st.columns(2)
         save_clicked = c_s.form_submit_button("💾 暫存")
         submit_clicked = c_d.form_submit_button("🚀 送出")
         
         if save_clicked or submit_clicked:
+            # 建立資料字典
             form_data = {
                 'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': str(dob), 'address': addr,
                 'height': height, 'weight': weight, 'blood_type': blood_type, 'marital_status': marital_status,
-                'emergency_contact': emergency_contact, 'emergency_phone': emergency_phone, 'home_phone': home_phone
+                'emergency_contact': emergency_contact, 'emergency_phone': emergency_phone,
+                'home_phone': home_phone, 'skills': skills, 'self_intro': intro
             }
-            # 遍歷所有 session_state 抓取輸入值
+            
+            # 動態抓取所有帶 _in 的 widget (edu, exp, 其他資訊)
             for k in st.session_state:
                 if isinstance(k, str) and k.endswith("_in"):
                     db_key = k[:-3] 
                     form_data[db_key] = st.session_state[k]
             
-            # 分公司欄位
+            # 分公司欄位特別補強
             if r_type == "Branch":
                 form_data.update({
                     'branch_region': st.session_state.get('branch_region_in', ''),
@@ -685,6 +791,7 @@ c_s, c_d = st.columns(2)
                 })
 
             status_now = "Submitted" if submit_clicked else "Draft"
+            
             if submit_clicked and (not n_cn or not phone):
                 st.error("姓名與電話為必填")
             else:
@@ -692,25 +799,17 @@ c_s, c_d = st.columns(2)
                 if success:
                     if submit_clicked:
                         hr = user.get('creator', '')
-                        if hr: send_email(hr, f"履歷送審: {n_cn}", "請登入系統審閱。")
-                        st.success("履歷已送出審核！")
-                    else: st.success("草稿已暫存！")
-                    time.sleep(1); st.rerun()
-                else: st.error(f"儲存失敗: {msg}")
+                        if hr: send_email(hr, f"履歷送審: {n_cn}", "面試者已送出履歷，請登入系統審閱。")
+                        st.success("履歷已成功送出審核！")
+                    else:
+                        st.success("草稿已成功暫存！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(f"儲存失敗: {msg}")
 # --- Entry ---
 if 'user' not in st.session_state: st.session_state.user = None
 if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
-
-
-
-
-
-
-
-
-
-
-
