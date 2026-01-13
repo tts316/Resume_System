@@ -768,8 +768,14 @@ def candidate_page():
 
         # 按鈕區
         c_s, c_d = st.columns(2)
-        save_clicked = c_s.form_submit_button("💾 暫存")
-        submit_clicked = c_d.form_submit_button("🚀 送出")
+# 如果已經核准，則隱藏或停用按鈕
+        if is_approved:
+            st.warning("履歷已核准，目前為唯讀模式，無法修改。")
+            save_clicked = False
+            submit_clicked = False
+        else:
+            save_clicked = c_s.form_submit_button("💾 暫存")
+            submit_clicked = c_d.form_submit_button("🚀 送出")
         
         if save_clicked or submit_clicked:
             # 建立資料字典
@@ -818,6 +824,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
