@@ -188,7 +188,7 @@ def hr_update_status(self, email, status, details=None):
             return False, "Fail"
         except Exception as e: return False, str(e)
 
-    def get_logo(self):
+def get_logo(self):
         try:
             data = self.ws_settings.get_all_values()
             for row in data:
@@ -197,7 +197,7 @@ def hr_update_status(self, email, status, details=None):
         except: pass
         return None
 
-    def update_logo(self, base64_str):
+def update_logo(self, base64_str):
         try:
             try: cell = self.ws_settings.find("logo", in_column=1)
             except: time.sleep(1); cell = self.ws_settings.find("logo", in_column=1)
@@ -813,6 +813,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
