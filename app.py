@@ -164,7 +164,7 @@ def save_resume(self, email, data, status="Draft"):
         except Exception as e:
             return False, f"API 寫入錯誤: {str(e)}"
 
-    def hr_update_status(self, email, status, details=None):
+def hr_update_status(self, email, status, details=None):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
@@ -810,6 +810,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
