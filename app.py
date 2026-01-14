@@ -773,14 +773,17 @@ def candidate_page():
             skills = st.text_area("專業技能", value=my_resume.get('skills', ''), height=100, key='skills_in')
             intro = st.text_area("自傳 / 工作成就", value=my_resume.get('self_intro', ''), height=150, key='self_intro_in')
 
-        # 按鈕區
+# --- 按鈕區塊修正 ---
         c_s, c_d = st.columns(2)
-# 如果已經核准，則隱藏或停用按鈕
+        
         if is_approved:
-            st.warning("履歷已核准，目前為唯讀模式，無法修改。")
+            # 如果已核准，顯示一個「停用」的提交按鈕，滿足 Streamlit 語法要求
+            c_s.form_submit_button("💾 暫存 (已核准)", disabled=True)
+            c_d.form_submit_button("✅ 履歷已核准 (唯讀)", disabled=True)
             save_clicked = False
             submit_clicked = False
         else:
+            # 如果未核准，顯示正常的按鈕
             save_clicked = c_s.form_submit_button("💾 暫存")
             submit_clicked = c_d.form_submit_button("🚀 送出")
         
@@ -831,6 +834,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
