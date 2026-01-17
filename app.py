@@ -757,8 +757,21 @@ def candidate_page():
             with st.container(border=True):
                 st.caption("🏪 分公司意願調查")
                 region = st.selectbox("區域", list(BRANCH_DATA.keys()), key="branch_region_in", disabled=is_approved)
-                loc_val = st.selectbox("首選分校", BRANCH_DATA.get(st.session_state.get('branch_region_in', '北一區'), []), key="branch_location_in", disabled=is_approved)
+                
+                # 動態取得當前區域的可選分校
+                current_region = st.session_state.get('branch_region_in', '北一區')
+                available_branches = BRANCH_DATA.get(current_region, [])
+                
+                # 調整標題為「首選任職分校」
+                primary_branch = st.selectbox("首選任職分校", available_branches, key="branch_location_in", disabled=is_approved)
+                
                 rot_val = st.radio("配合輪調？", ["是", "否"], key="accept_rotation_in", horizontal=True, disabled=is_approved)
+                
+                # 配合輪調複選選單：當選擇「是」時顯示，並過濾首選分校
+                if st.session_state.get('accept_rotation_in') == "是":
+                    other_branches = [b for b in available_branches if b != primary_branch]
+                    st.multiselect("請勾選可配合輪調支援的分校 (可複選)", options=other_branches, key="rotation_backups_in", disabled=is_approved)
+                
                 shift_val = st.radio("配合輪班？", ["是", "否"], key="shift_avail_in", horizontal=True, disabled=is_approved)
                 
                 c_h1, c_h2 = st.columns(2)
@@ -821,14 +834,25 @@ def candidate_page():
             # 動態抓取所有帶 _in 的 widget (edu, exp, 其他資訊)
             for k in st.session_state:
                 if isinstance(k, str) and k.endswith("_in"):
+                    # 如果是 rotation_backups_in，先跳過不直接存入資料庫，因為要整合
+                    if k == "rotation_backups_in":
+                        continue
                     db_key = k[:-3] 
                     form_data[db_key] = st.session_state[k]
             
-            # 分公司欄位特別補強
-            if r_type == "Branch":
+            # 分公司欄位整合處理 (整合首選與輪調支援分校)
+            if r_type in ["Branch", "分公司", "branch"]:
+                p_branch = st.session_state.get('branch_location_in', '')
+                backups = st.session_state.get('rotation_backups_in', [])
+                
+                # 如果有選輪調支援分校，則整合成字串存入 branch_location
+                if backups and st.session_state.get('accept_rotation_in') == "是":
+                    form_data['branch_location'] = f"{p_branch} (輪調: {', '.join(backups)})"
+                else:
+                    form_data['branch_location'] = p_branch
+
                 form_data.update({
                     'branch_region': st.session_state.get('branch_region_in', ''),
-                    'branch_location': st.session_state.get('branch_location_in', ''),
                     'accept_rotation': st.session_state.get('accept_rotation_in', ''),
                     'shift_avail': st.session_state.get('shift_avail_in', '')
                 })
@@ -856,6 +880,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
