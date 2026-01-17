@@ -665,14 +665,14 @@ def candidate_page():
         with st.container(border=True):
             st.caption("基本資料")
             c1, c2, c3, c4 = st.columns(4)
-            n_cn = c1.text_input("中文姓名", value=my_resume.get('name_cn',''), key='name_cn_in')
-            n_en = c2.text_input("英文姓名", value=my_resume.get('name_en',''), key='name_en_in')
-            height = c3.text_input("身高(cm)", value=my_resume.get('height',''), key='height_in')
-            weight = c4.text_input("體重(kg)", value=my_resume.get('weight',''), key='weight_in')
+            n_cn = c1.text_input("中文姓名", value=my_resume.get('name_cn',''), key='name_cn_in', disabled=is_approved)
+            n_en = c2.text_input("英文姓名", value=my_resume.get('name_en',''), key='name_en_in', disabled=is_approved)
+            height = c3.text_input("身高(cm)", value=my_resume.get('height',''), key='height_in', disabled=is_approved)
+            weight = c4.text_input("體重(kg)", value=my_resume.get('weight',''), key='weight_in', disabled=is_approved)
             
             c5, c6, c7 = st.columns([2, 1, 1])
-            phone = c5.text_input("手機", value=my_resume.get('phone',''), key='phone_in')
-            home_phone = c6.text_input("市話 (H)", value=my_resume.get('home_phone',''), key='home_phone_in')
+            phone = c5.text_input("手機", value=my_resume.get('phone',''), key='phone_in', disabled=is_approved)
+            home_phone = c6.text_input("市話 (H)", value=my_resume.get('home_phone',''), key='home_phone_in', disabled=is_approved)
             
             m_val = my_resume.get('marital_status', '未婚')
             m_opts = ["未婚", "已婚"]
@@ -680,12 +680,12 @@ def candidate_page():
             
             try: dval = pd.to_datetime(my_resume['dob']).date() if my_resume['dob'] else date(1995,1,1)
             except: dval = date(1995,1,1)
-            dob = c1.date_input("生日", value=dval, min_value=date(1900, 1, 1), key='dob_in')
-            addr = st.text_input("通訊地址", value=my_resume.get('address',''), key='address_in')
+            dob = c1.date_input("生日", value=dval, min_value=date(1900, 1, 1), key='dob_in', disabled=is_approved)
+            addr = st.text_input("通訊地址", value=my_resume.get('address',''), key='address_in', disabled=is_approved)
             
             c8, c9 = st.columns(2)
-            emergency_contact = c8.text_input("緊急聯絡人", value=my_resume.get('emergency_contact',''), key='emergency_contact_in')
-            emergency_phone = c9.text_input("緊急聯絡電話", value=my_resume.get('emergency_phone',''), key='emergency_phone_in')
+            emergency_contact = c8.text_input("緊急聯絡人", value=my_resume.get('emergency_contact',''), key='emergency_contact_in', disabled=is_approved)
+            emergency_phone = c9.text_input("緊急聯絡電話", value=my_resume.get('emergency_phone',''), key='emergency_phone_in', disabled=is_approved)
             
             b_val = my_resume.get('blood_type', 'O')
             b_opts = ["O", "A", "B", "AB"]
@@ -697,12 +697,12 @@ def candidate_page():
             for i in range(1, 4):
                 st.markdown(f"**學歷 {i}**")
                 c_d1, c_d2 = st.columns(2)
-                st.text_input(f"入學 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in')
-                st.text_input(f"畢/肄業 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in')
+                st.text_input(f"入學 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in', disabled=is_approved)
+                st.text_input(f"畢/肄業 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in', disabled=is_approved)
 
                 rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
-                st.text_input(f"學校 {i}", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
-                st.text_input(f"科系 {i}", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
+                st.text_input(f"學校 {i}", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in', disabled=is_approved)
+                st.text_input(f"科系 {i}", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in', disabled=is_approved)
                 
                 d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
                 d_curr = my_resume.get(f'edu_{i}_degree', '學士')
@@ -718,16 +718,16 @@ def candidate_page():
             for i in range(1, 5):
                 with st.expander(f"經歷 {i}"):
                     c_ym1, c_ym2 = st.columns(2)
-                    st.text_input(f"起始年月 (YYYY/MM) {i}", value=my_resume.get(f'exp_{i}_start',''), key=f'exp_{i}_start_in')
-                    st.text_input(f"結束年月 (YYYY/MM) {i}", value=my_resume.get(f'exp_{i}_end',''), key=f'exp_{i}_end_in')
+                    st.text_input(f"起始年月 (YYYY/MM) {i}", value=my_resume.get(f'exp_{i}_start',''), key=f'exp_{i}_start_in', disabled=is_approved)
+                    st.text_input(f"結束年月 (YYYY/MM) {i}", value=my_resume.get(f'exp_{i}_end',''), key=f'exp_{i}_end_in', disabled=is_approved)
                     ec1, ec2, ec3 = st.columns([2, 2, 1])
-                    st.text_input(f"公司名稱 {i}", value=my_resume.get(f'exp_{i}_co',''), key=f'exp_{i}_co_in')
-                    st.text_input(f"職稱 {i}", value=my_resume.get(f'exp_{i}_title',''), key=f'exp_{i}_title_in')
-                    st.text_input(f"薪資 {i}", value=my_resume.get(f'exp_{i}_salary',''), key=f'exp_{i}_salary_in')
+                    st.text_input(f"公司名稱 {i}", value=my_resume.get(f'exp_{i}_co',''), key=f'exp_{i}_co_in', disabled=is_approved)
+                    st.text_input(f"職稱 {i}", value=my_resume.get(f'exp_{i}_title',''), key=f'exp_{i}_title_in', disabled=is_approved)
+                    st.text_input(f"薪資 {i}", value=my_resume.get(f'exp_{i}_salary',''), key=f'exp_{i}_salary_in', disabled=is_approved)
                     ec4, ec5 = st.columns([2, 2])
-                    st.text_input(f"主管姓名/職稱 {i}", value=my_resume.get(f'exp_{i}_boss',''), key=f'exp_{i}_boss_in')
-                    st.text_input(f"聯絡電話 {i}", value=my_resume.get(f'exp_{i}_phone',''), key=f'exp_{i}_phone_in')
-                    st.text_input(f"離職原因 {i}", value=my_resume.get(f'exp_{i}_reason',''), key=f'exp_{i}_reason_in')
+                    st.text_input(f"主管姓名/職稱 {i}", value=my_resume.get(f'exp_{i}_boss',''), key=f'exp_{i}_boss_in', disabled=is_approved)
+                    st.text_input(f"聯絡電話 {i}", value=my_resume.get(f'exp_{i}_phone',''), key=f'exp_{i}_phone_in', disabled=is_approved)
+                    st.text_input(f"離職原因 {i}", value=my_resume.get(f'exp_{i}_reason',''), key=f'exp_{i}_reason_in', disabled=is_approved)
 
         # 4. 分公司意願區塊
         region = ""; loc_val = ""; rot_val = ""; shift_val = ""
@@ -750,8 +750,8 @@ def candidate_page():
         # 5. 其他資訊與自傳
         with st.container(border=True):
             st.caption("其他資訊與自傳")
-            st.text_input("應徵管道", value=my_resume.get('source',''), key='source_in')
-            st.text_input("任職親友", value=my_resume.get('relative_name',''), key='relative_name_in')
+            st.text_input("應徵管道", value=my_resume.get('source',''), key='source_in', disabled=is_approved)
+            st.text_input("任職親友", value=my_resume.get('relative_name',''), key='relative_name_in', disabled=is_approved)
             
             c_ot1, c_ot2, c_ot3 = st.columns(3)
             with c_ot1: st.radio("補教經驗", ["無", "有"], index=1 if my_resume.get('teach_exp')=="有" else 0, key='teach_exp_in', horizontal=True)
@@ -767,8 +767,8 @@ def candidate_page():
             with c_ot7: st.radio("獨力負擔？", ["需要", "不需要"], index=1 if my_resume.get('family_debt')=="不需要" else 0, key='family_debt_in', horizontal=True)
             
             c_com1, c_com2 = st.columns(2)
-            st.text_input("通勤方式", value=my_resume.get('commute_method',''), key='commute_method_in')
-            st.text_input("通勤時間(分)", value=my_resume.get('commute_time',''), key='commute_time_in')
+            st.text_input("通勤方式", value=my_resume.get('commute_method',''), key='commute_method_in', disabled=is_approved)
+            st.text_input("通勤時間(分)", value=my_resume.get('commute_time',''), key='commute_time_in', disabled=is_approved)
             
             skills = st.text_area("專業技能", value=my_resume.get('skills', ''), height=100, key='skills_in')
             intro = st.text_area("自傳 / 工作成就", value=my_resume.get('self_intro', ''), height=150, key='self_intro_in')
@@ -834,6 +834,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
