@@ -21,6 +21,17 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # --- 1. 系統設定 ---
 st.set_page_config(page_title="聯成電腦 - 人才招募系統", layout="wide", page_icon="📝")
+# --- 隱藏開發者 UI 介面 ---
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}          /* 隱藏左上角選單 */
+            footer {visibility: hidden;}            /* 隱藏頁尾 "Made with Streamlit" */
+            header {visibility: hidden;}            /* 隱藏上方 Header (包含 Manage app) */
+            .viewerBadge_container__1QSob {display: none !important;} /* 隱藏右下角 Manage app 浮動標籤 */
+            button[title="View source"] {display: none;}             /* 隱藏源碼檢視 */
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
 
 # Email 設定
 SMTP_SERVER = "smtp.gmail.com"
@@ -834,6 +845,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
