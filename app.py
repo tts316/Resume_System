@@ -108,17 +108,39 @@ class ResumeDB:
             return None
         except: return None
 
-    def create_user(self, creator_email, email, name, role, r_type=""):
+def create_user(self, creator_email, email, name, role, r_type=""):
         try:
             df = self.get_df("users")
-            if not df.empty and str(email) in df['email'].astype(str).values: return False, "Email 已存在"
+            if not df.empty and str(email) in df['email'].astype(str).values: 
+                return False, "Email 已存在"
+            
+            # 1. 建立使用者帳號
             self.ws_users.append_row([email, email, name, role, creator_email, str(date.today())])
+            
             if role == "candidate":
-                # 補足 89 欄
-                row_data = [email, "New", name] + [""] * 48 + [r_type] + [""] * 37
+                # --- [修正點]：動態取得標題並精確對應欄位 ---
+                headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
+                # 建立一個與標題長度完全相等的空清單 (89 欄)
+                row_data = [""] * len(headers)
+                
+                # 根據標題名稱精確填入資料
+                field_map = {
+                    "email": email,
+                    "status": "New",
+                    "name_cn": name,
+                    "resume_type": r_type
+                }
+                
+                for field, value in field_map.items():
+                    if field in headers:
+                        row_data[headers.index(field)] = value
+                
+                # 一次性整列寫入，保證位置 100% 正確
                 self.ws_resumes.append_row(row_data)
+                
             return True, "建立成功"
-        except Exception as e: return False, str(e)
+        except Exception as e: 
+            return False, f"建立失敗: {str(e)}"
 
     def change_password(self, email, new_password):
         try:
@@ -834,6 +856,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
