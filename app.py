@@ -686,7 +686,7 @@ def candidate_page():
             
             m_val = my_resume.get('marital_status', '未婚')
             m_opts = ["未婚", "已婚"]
-            marital_status = c7.selectbox("婚姻", m_opts, index=m_opts.index(m_val) if m_val in m_opts else 0, key='marital_status_in')
+            marital_status = c7.selectbox("婚姻", m_opts, index=m_opts.index(m_val) if m_val in m_opts else 0, key='marital_status_in', disabled=is_approved)
             
             try: dval = pd.to_datetime(my_resume['dob']).date() if my_resume['dob'] else date(1995,1,1)
             except: dval = date(1995,1,1)
@@ -699,7 +699,7 @@ def candidate_page():
             
             b_val = my_resume.get('blood_type', 'O')
             b_opts = ["O", "A", "B", "AB"]
-            blood_type = c3.selectbox("血型", b_opts, index=b_opts.index(b_val) if b_val in b_opts else 0, key="blood_type_in")
+            blood_type = c3.selectbox("血型", b_opts, index=b_opts.index(b_val) if b_val in b_opts else 0, key="blood_type_in", disabled=is_approved)
 
         # 2. 學歷
         with st.container(border=True):
@@ -716,10 +716,10 @@ def candidate_page():
                 
                 d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
                 d_curr = my_resume.get(f'edu_{i}_degree', '學士')
-                st.selectbox(f"學位 {i}", d_opts, index=d_opts.index(d_curr) if d_curr in d_opts else 0, key=f'edu_{i}_degree_in')
+                st.selectbox(f"學位 {i}", d_opts, index=d_opts.index(d_curr) if d_curr in d_opts else 0, key=f'edu_{i}_degree_in', disabled=is_approved)
                 
                 s_curr = my_resume.get(f'edu_{i}_state', '畢業')
-                st.radio(f"狀態 {i}", ["畢業", "肄業"], index=1 if s_curr == "肄業" else 0, horizontal=True, key=f'edu_{i}_state_in')
+                st.radio(f"狀態 {i}", ["畢業", "肄業"], index=1 if s_curr == "肄業" else 0, horizontal=True, key=f'edu_{i}_state_in', disabled=is_approved)
                 if i < 3: st.divider()
 
         # 3. 經歷
@@ -744,18 +744,18 @@ def candidate_page():
         if r_type == "Branch":
             with st.container(border=True):
                 st.caption("🏪 分公司意願調查")
-                region = st.selectbox("區域", list(BRANCH_DATA.keys()), key="branch_region_in")
-                loc_val = st.selectbox("首選分校", BRANCH_DATA.get(st.session_state.get('branch_region_in', '北一區'), []), key="branch_location_in")
-                rot_val = st.radio("配合輪調？", ["是", "否"], key="accept_rotation_in", horizontal=True)
-                shift_val = st.radio("配合輪班？", ["是", "否"], key="shift_avail_in", horizontal=True)
+                region = st.selectbox("區域", list(BRANCH_DATA.keys()), key="branch_region_in", disabled=is_approved)
+                loc_val = st.selectbox("首選分校", BRANCH_DATA.get(st.session_state.get('branch_region_in', '北一區'), []), key="branch_location_in", disabled=is_approved)
+                rot_val = st.radio("配合輪調？", ["是", "否"], key="accept_rotation_in", horizontal=True, disabled=is_approved)
+                shift_val = st.radio("配合輪班？", ["是", "否"], key="shift_avail_in", horizontal=True, disabled=is_approved)
                 
                 c_h1, c_h2 = st.columns(2)
-                st.radio("國定假日輪值？", ["可以", "不可以"], key='holiday_shift_in', horizontal=True)
-                st.radio("配合輪早晚班？", ["可以", "不可以"], key='rotate_shift_in', horizontal=True)
+                st.radio("國定假日輪值？", ["可以", "不可以"], key='holiday_shift_in', horizontal=True, disabled=is_approved)
+                st.radio("配合輪早晚班？", ["可以", "不可以"], key='rotate_shift_in', horizontal=True, disabled=is_approved)
                 c_f1, c_f2 = st.columns(2)
-                st.radio("家人同意輪班？", ["同意", "不同意"], key='family_support_shift_in', horizontal=True)
-                st.radio("需獨力扶養長幼？", ["需要", "不需要"], key='care_dependent_in', horizontal=True)
-                st.radio("需獨力負擔家計？", ["需要", "不需要"], key='financial_burden_in', horizontal=True)
+                st.radio("家人同意輪班？", ["同意", "不同意"], key='family_support_shift_in', horizontal=True, disabled=is_approved)
+                st.radio("需獨力扶養長幼？", ["需要", "不需要"], key='care_dependent_in', horizontal=True, disabled=is_approved)
+                st.radio("需獨力負擔家計？", ["需要", "不需要"], key='financial_burden_in', horizontal=True, disabled=is_approved)
 
         # 5. 其他資訊與自傳
         with st.container(border=True):
@@ -764,24 +764,24 @@ def candidate_page():
             st.text_input("任職親友", value=my_resume.get('relative_name',''), key='relative_name_in', disabled=is_approved)
             
             c_ot1, c_ot2, c_ot3 = st.columns(3)
-            with c_ot1: st.radio("補教經驗", ["無", "有"], index=1 if my_resume.get('teach_exp')=="有" else 0, key='teach_exp_in', horizontal=True)
-            with c_ot2: st.radio("出國史", ["無", "有"], index=1 if my_resume.get('travel_history')=="有" else 0, key='travel_history_in', horizontal=True)
-            with c_ot3: st.radio("兵役狀況", ["未役", "免役", "役畢"], key='military_status_in', horizontal=True)
+            with c_ot1: st.radio("補教經驗", ["無", "有"], index=1 if my_resume.get('teach_exp')=="有" else 0, key='teach_exp_in', horizontal=True, disabled=is_approved)
+            with c_ot2: st.radio("出國史", ["無", "有"], index=1 if my_resume.get('travel_history')=="有" else 0, key='travel_history_in', horizontal=True, disabled=is_approved)
+            with c_ot3: st.radio("兵役狀況", ["未役", "免役", "役畢"], key='military_status_in', horizontal=True, disabled=is_approved)
             
             c_ot4, c_ot5 = st.columns(2)
-            with c_ot4: st.radio("近年住院史？", ["無", "有"], index=1 if my_resume.get('hospitalization')=="有" else 0, key='hospitalization_in', horizontal=True)
-            with c_ot5: st.radio("慢性病藥控？", ["無", "有"], index=1 if my_resume.get('chronic_disease')=="有" else 0, key='chronic_disease_in', horizontal=True)
+            with c_ot4: st.radio("近年住院史？", ["無", "有"], index=1 if my_resume.get('hospitalization')=="有" else 0, key='hospitalization_in', horizontal=True, disabled=is_approved)
+            with c_ot5: st.radio("慢性病藥控？", ["無", "有"], index=1 if my_resume.get('chronic_disease')=="有" else 0, key='chronic_disease_in', horizontal=True, disabled=is_approved)
             
             c_ot6, c_ot7 = st.columns(2)
-            with c_ot6: st.radio("獨力扶養？", ["需要", "不需要"], index=1 if my_resume.get('family_support')=="不需要" else 0, key='family_support_in', horizontal=True)
-            with c_ot7: st.radio("獨力負擔？", ["需要", "不需要"], index=1 if my_resume.get('family_debt')=="不需要" else 0, key='family_debt_in', horizontal=True)
+            with c_ot6: st.radio("獨力扶養？", ["需要", "不需要"], index=1 if my_resume.get('family_support')=="不需要" else 0, key='family_support_in', horizontal=True, disabled=is_approved)
+            with c_ot7: st.radio("獨力負擔？", ["需要", "不需要"], index=1 if my_resume.get('family_debt')=="不需要" else 0, key='family_debt_in', horizontal=True, disabled=is_approved)
             
             c_com1, c_com2 = st.columns(2)
             st.text_input("通勤方式", value=my_resume.get('commute_method',''), key='commute_method_in', disabled=is_approved)
             st.text_input("通勤時間(分)", value=my_resume.get('commute_time',''), key='commute_time_in', disabled=is_approved)
             
-            skills = st.text_area("專業技能", value=my_resume.get('skills', ''), height=100, key='skills_in')
-            intro = st.text_area("自傳 / 工作成就", value=my_resume.get('self_intro', ''), height=150, key='self_intro_in')
+            skills = st.text_area("專業技能", value=my_resume.get('skills', ''), height=100, key='skills_in', disabled=is_approved)
+            intro = st.text_area("自傳 / 工作成就", value=my_resume.get('self_intro', ''), height=150, key='self_intro_in', disabled=is_approved)
 
 # --- 按鈕區塊修正 ---
         c_s, c_d = st.columns(2)
@@ -844,6 +844,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
