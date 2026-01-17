@@ -108,7 +108,7 @@ class ResumeDB:
             return None
         except: return None
 
-def create_user(self, creator_email, email, name, role, r_type=""):
+    def create_user(self, creator_email, email, name, role, r_type=""):
         try:
             df = self.get_df("users")
             if not df.empty and str(email) in df['email'].astype(str).values: 
@@ -856,6 +856,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
