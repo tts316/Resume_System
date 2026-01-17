@@ -24,7 +24,6 @@ st.set_page_config(page_title="聯成電腦 - 人才招募系統", layout="wide"
 # --- 隱藏開發者 UI 介面 ---
 hide_st_style = """
             <style>
-            #MainMenu {visibility: hidden;}          /* 隱藏左上角選單 */
             footer {visibility: hidden;}            /* 隱藏頁尾 "Made with Streamlit" */
             header {visibility: hidden;}            /* 隱藏上方 Header (包含 Manage app) */
             .viewerBadge_container__1QSob {display: none !important;} /* 隱藏右下角 Manage app 浮動標籤 */
@@ -845,6 +844,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
