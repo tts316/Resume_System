@@ -629,6 +629,7 @@ def candidate_page():
     user = st.session_state.user
     render_sidebar(user)
     st.header(f"📝 履歷填寫")
+    st.write(f"DEBUG: 目前履歷類型為 '{r_type}'") # 這行看完後可以刪掉
     
     df = sys.get_df("resumes")
     if df.empty: st.error("DB Error"); return
@@ -731,7 +732,7 @@ def candidate_page():
 
         # 4. 分公司意願區塊
         region = ""; loc_val = ""; rot_val = ""; shift_val = ""
-        if r_type == "Branch":
+        if r_type in ["Branch", "分公司", "branch"]:            
             with st.container(border=True):
                 st.caption("🏪 分公司意願調查")
                 region = st.selectbox("區域", list(BRANCH_DATA.keys()), key="branch_region_in", disabled=is_approved)
@@ -834,6 +835,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
