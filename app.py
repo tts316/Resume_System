@@ -629,7 +629,6 @@ def candidate_page():
     user = st.session_state.user
     render_sidebar(user)
     st.header(f"📝 履歷填寫")
-    st.write(f"DEBUG: 目前履歷類型為 '{r_type}'") # 這行看完後可以刪掉
     
     df = sys.get_df("resumes")
     if df.empty: st.error("DB Error"); return
@@ -835,6 +834,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
