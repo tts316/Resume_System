@@ -661,7 +661,7 @@ def candidate_page():
     status = my_resume.get('status', 'New')
     r_type = my_resume.get('resume_type', 'HQ') 
 
-# 這裡判斷狀態
+    # 這裡判斷狀態
     is_approved = (status == "Approved")
 
     if is_approved: 
@@ -713,26 +713,27 @@ def candidate_page():
             b_opts = ["O", "A", "B", "AB"]
             blood_type = c3.selectbox("血型", b_opts, index=b_opts.index(b_val) if b_val in b_opts else 0, key="blood_type_in", disabled=is_approved)
 
-        # 2. 學歷
+        # 2. 學歷 (已修正為可縮放介面)
         with st.container(border=True):
             st.caption("學歷 (請填寫最高及次高學歷)")
             for i in range(1, 4):
-                st.markdown(f"**學歷 {i}**")
-                c_d1, c_d2 = st.columns(2)
-                st.text_input(f"入學 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in', disabled=is_approved)
-                st.text_input(f"畢/肄業 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in', disabled=is_approved)
+                is_expanded = True if i == 1 else False
+                with st.expander(f"🎓 學歷 {i}", expanded=is_expanded):
+                    c_d1, c_d2 = st.columns(2)
+                    st.text_input(f"入學 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in', disabled=is_approved)
+                    st.text_input(f"畢/肄業 (YYYY/MM) {i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in', disabled=is_approved)
 
-                rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
-                st.text_input(f"學校 {i}", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in', disabled=is_approved)
-                st.text_input(f"科系 {i}", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in', disabled=is_approved)
-                
-                d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
-                d_curr = my_resume.get(f'edu_{i}_degree', '學士')
-                st.selectbox(f"學位 {i}", d_opts, index=d_opts.index(d_curr) if d_curr in d_opts else 0, key=f'edu_{i}_degree_in', disabled=is_approved)
-                
-                s_curr = my_resume.get(f'edu_{i}_state', '畢業')
-                st.radio(f"狀態 {i}", ["畢業", "肄業"], index=1 if s_curr == "肄業" else 0, horizontal=True, key=f'edu_{i}_state_in', disabled=is_approved)
-                if i < 3: st.divider()
+                    rc1, rc2 = st.columns(2)
+                    st.text_input(f"學校 {i}", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in', disabled=is_approved)
+                    st.text_input(f"科系 {i}", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in', disabled=is_approved)
+                    
+                    rc3, rc4 = st.columns(2)
+                    d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
+                    d_curr = my_resume.get(f'edu_{i}_degree', '學士')
+                    st.selectbox(f"學位 {i}", d_opts, index=d_opts.index(d_curr) if d_curr in d_opts else 0, key=f'edu_{i}_degree_in', disabled=is_approved)
+                    
+                    s_curr = my_resume.get(f'edu_{i}_state', '畢業')
+                    st.radio(f"狀態 {i}", ["畢業", "肄業"], index=1 if s_curr == "肄業" else 0, horizontal=True, key=f'edu_{i}_state_in', disabled=is_approved)
 
         # 3. 經歷
         with st.container(border=True):
@@ -751,7 +752,7 @@ def candidate_page():
                     st.text_input(f"聯絡電話 {i}", value=my_resume.get(f'exp_{i}_phone',''), key=f'exp_{i}_phone_in', disabled=is_approved)
                     st.text_input(f"離職原因 {i}", value=my_resume.get(f'exp_{i}_reason',''), key=f'exp_{i}_reason_in', disabled=is_approved)
 
-        # 4. 分公司意願區塊
+        # 4. 分公司意願區塊 (已修正配合輪調邏輯)
         region = ""; loc_val = ""; rot_val = ""; shift_val = ""
         if r_type in ["Branch", "分公司", "branch"]:            
             with st.container(border=True):
@@ -762,20 +763,19 @@ def candidate_page():
                 current_region = st.session_state.get('branch_region_in', '北一區')
                 available_branches = BRANCH_DATA.get(current_region, [])
                 
-                # 調整標題為「首選任職分校」
+                # 標題為「首選任職分校」
                 primary_branch = st.selectbox("首選任職分校", available_branches, key="branch_location_in", disabled=is_approved)
-        # --- 找到 766 行之後，貼上以下這段 ---
                 
-                # 1. 配合輪調選項
+                # 修正後的配合輪調邏輯 (確保 key 唯一)
                 rot_val = st.radio("配合輪調？", ["是", "否"], key="accept_rotation_in", horizontal=True, disabled=is_approved)
                 
-                # --- 核心邏輯：當選「否」時，強制清空 session_state 裡的複選清單 ---
+                # 當選「否」時，清空 session_state 內的複選清單資料
                 if rot_val == "否":
-                    st.session_state['rotation_backups_in'] = []
-                    
-                # 2. 配合輪調複選選單：只有當選擇「是」時才顯示
+                    if 'rotation_backups_in' in st.session_state and st.session_state['rotation_backups_in'] != []:
+                        st.session_state['rotation_backups_in'] = []
+                
+                # 只有選「是」才顯示複選框
                 if rot_val == "是":
-                    # 過濾掉首選分校
                     other_branches = [b for b in available_branches if b != primary_branch]
                     st.multiselect(
                         "請勾選可配合輪調支援的分校 (可複選)", 
@@ -783,16 +783,6 @@ def candidate_page():
                         key="rotation_backups_in", 
                         disabled=is_approved
                     )
-                
-                # 3. 配合輪班選項 (接續原本的程式碼)
-                shift_val = st.radio("配合輪班？", ["是", "否"], key="shift_avail_in", horizontal=True, disabled=is_approved)
-                # -----------------------------------                
-                rot_val = st.radio("配合輪調？", ["是", "否"], key="accept_rotation_in", horizontal=True, disabled=is_approved)
-                
-                # 配合輪調複選選單：當選擇「是」時顯示，並過濾首選分校
-                if st.session_state.get('accept_rotation_in') == "是":
-                    other_branches = [b for b in available_branches if b != primary_branch]
-                    st.multiselect("請勾選可配合輪調支援的分校 (可複選)", options=other_branches, key="rotation_backups_in", disabled=is_approved)
                 
                 shift_val = st.radio("配合輪班？", ["是", "否"], key="shift_avail_in", horizontal=True, disabled=is_approved)
                 
@@ -830,17 +820,15 @@ def candidate_page():
             skills = st.text_area("專業技能", value=my_resume.get('skills', ''), height=100, key='skills_in', disabled=is_approved)
             intro = st.text_area("自傳 / 工作成就", value=my_resume.get('self_intro', ''), height=150, key='self_intro_in', disabled=is_approved)
 
-# --- 按鈕區塊修正 ---
+        # --- 按鈕區塊 ---
         c_s, c_d = st.columns(2)
         
         if is_approved:
-            # 如果已核准，顯示一個「停用」的提交按鈕，滿足 Streamlit 語法要求
             c_s.form_submit_button("💾 暫存 (已核准)", disabled=True)
             c_d.form_submit_button("✅ 履歷已核准 (唯讀)", disabled=True)
             save_clicked = False
             submit_clicked = False
         else:
-            # 如果未核准，顯示正常的按鈕
             save_clicked = c_s.form_submit_button("💾 暫存")
             submit_clicked = c_d.form_submit_button("🚀 送出")
         
@@ -853,21 +841,19 @@ def candidate_page():
                 'home_phone': home_phone, 'skills': skills, 'self_intro': intro
             }
             
-            # 動態抓取所有帶 _in 的 widget (edu, exp, 其他資訊)
+            # 動態抓取所有帶 _in 的 widget
             for k in st.session_state:
                 if isinstance(k, str) and k.endswith("_in"):
-                    # 如果是 rotation_backups_in，先跳過不直接存入資料庫，因為要整合
                     if k == "rotation_backups_in":
                         continue
                     db_key = k[:-3] 
                     form_data[db_key] = st.session_state[k]
             
-            # 分公司欄位整合處理 (整合首選與輪調支援分校)
+            # 分公司欄位整合處理
             if r_type in ["Branch", "分公司", "branch"]:
                 p_branch = st.session_state.get('branch_location_in', '')
                 backups = st.session_state.get('rotation_backups_in', [])
                 
-                # 如果有選輪調支援分校，則整合成字串存入 branch_location
                 if backups and st.session_state.get('accept_rotation_in') == "是":
                     form_data['branch_location'] = f"{p_branch} (輪調: {', '.join(backups)})"
                 else:
@@ -902,6 +888,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
