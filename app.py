@@ -764,7 +764,29 @@ def candidate_page():
                 
                 # 調整標題為「首選任職分校」
                 primary_branch = st.selectbox("首選任職分校", available_branches, key="branch_location_in", disabled=is_approved)
+        # --- 找到 766 行之後，貼上以下這段 ---
                 
+                # 1. 配合輪調選項
+                rot_val = st.radio("配合輪調？", ["是", "否"], key="accept_rotation_in", horizontal=True, disabled=is_approved)
+                
+                # --- 核心邏輯：當選「否」時，強制清空 session_state 裡的複選清單 ---
+                if rot_val == "否":
+                    st.session_state['rotation_backups_in'] = []
+                    
+                # 2. 配合輪調複選選單：只有當選擇「是」時才顯示
+                if rot_val == "是":
+                    # 過濾掉首選分校
+                    other_branches = [b for b in available_branches if b != primary_branch]
+                    st.multiselect(
+                        "請勾選可配合輪調支援的分校 (可複選)", 
+                        options=other_branches, 
+                        key="rotation_backups_in", 
+                        disabled=is_approved
+                    )
+                
+                # 3. 配合輪班選項 (接續原本的程式碼)
+                shift_val = st.radio("配合輪班？", ["是", "否"], key="shift_avail_in", horizontal=True, disabled=is_approved)
+                # -----------------------------------                
                 rot_val = st.radio("配合輪調？", ["是", "否"], key="accept_rotation_in", horizontal=True, disabled=is_approved)
                 
                 # 配合輪調複選選單：當選擇「是」時顯示，並過濾首選分校
@@ -880,6 +902,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
