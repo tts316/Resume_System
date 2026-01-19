@@ -477,7 +477,7 @@ def admin_page():
                     if succ:
                         try: link = st.secrets["email"]["app_url"]
                         except: link = "https://share.streamlit.io/"
-                        body = f"👋您好，邀請您登入系統填寫履歷，以安排後續面試：{link}\n帳號：{c_email}\n密碼：{c_email}\n\n聯成電腦教育集團 人資部 敬啟"
+                        body = f"👋您好，邀請您登入系統填寫履歷，以安排後續面試：\n填寫連結{link}\n帳號：{c_email}\n密碼：{c_email}\n\n聯成電腦教育集團 人資部 敬啟"
                         send_email(c_email, "聯成電腦教育集團，面試邀請", body)
                         st.success(f"已發送給 {c_name}")
                     else: st.error(msg)
@@ -888,6 +888,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
