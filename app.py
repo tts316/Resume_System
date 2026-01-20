@@ -829,8 +829,8 @@ def candidate_page():
             with c_ot5: st.radio("慢性病藥控？", ["無", "有"], index=1 if my_resume.get('chronic_disease')=="有" else 0, key='chronic_disease_in', horizontal=True, disabled=is_approved)
             
             c_ot6, c_ot7 = st.columns(2)
-            with c_ot6: st.radio("獨力扶養？", ["需要", "不需要"], index=1 if my_resume.get('family_support')=="不需要" else 0, key='family_support_in', horizontal=True, disabled=is_approved)
-            with c_ot7: st.radio("獨力負擔？", ["需要", "不需要"], index=1 if my_resume.get('family_debt')=="不需要" else 0, key='family_debt_in', horizontal=True, disabled=is_approved)
+            #with c_ot6: st.radio("獨力扶養？", ["需要", "不需要"], index=1 if my_resume.get('family_support')=="不需要" else 0, key='family_support_in', horizontal=True, disabled=is_approved)
+            #with c_ot7: st.radio("獨力負擔？", ["需要", "不需要"], index=1 if my_resume.get('family_debt')=="不需要" else 0, key='family_debt_in', horizontal=True, disabled=is_approved)
             
             c_com1, c_com2 = st.columns(2)
             st.text_input("通勤方式", value=my_resume.get('commute_method',''), key='commute_method_in', disabled=is_approved)
@@ -907,6 +907,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
