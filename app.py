@@ -606,13 +606,15 @@ def admin_page():
                     iv_notes = st.text_area("⚠️ 面試注意事項", value=target.get('interview_notes', ''))
                     cmt = st.text_input("💬 HR 評語/留言", value=target.get('hr_comment', ''))
 
+# --- 審核按鈕區塊修復 ---
                     c_ok, c_no = st.columns(2)
-                    if c_ok.button("✅ 核准 (發送通知)", key="ok"):
-                        # 完整的細節字典
+                    
+                    # 1. 核准按鈕邏輯
+                    if c_ok.button("✅ 核准 (發送通知)", key="ok_btn_final"):
                         details = {
                             'hr_comment': cmt,
-                            'interview_date': str(iv_date), # 同步更新 interview_date 欄位 (如有)
-                            'interview_time': combined_interview_info, # 整合後的日期時間存入 interview_time
+                            'interview_date': str(iv_date),
+                            'interview_time': combined_interview_info,
                             'interview_location': iv_loc,
                             'interview_dept': iv_dept,
                             'interview_manager': iv_man,
@@ -620,7 +622,6 @@ def admin_page():
                         }
                         sys.hr_update_status(sel_email, "Approved", details)
                         
-                        # 構建 Email 內容，使用整合後的 combined_interview_info
                         mail_body = f"""您好，您的履歷已通過初步審核。
 以下是您的面試資訊：
 📅 面試時間：{combined_interview_info}
@@ -633,7 +634,25 @@ HR 留言：{cmt}
 請準時參加面試，謝謝。"""
                         
                         send_email(sel_email, "【聯成電腦】面試邀約通知", mail_body)
-                        st.success(f"已核准！面試時間設定為：{combined_interview_info}"); time.sleep(1); st.rerun()
+                        st.success("已核准並發送詳細通知"); time.sleep(1); st.rerun()
+
+                    # 2. 退件按鈕邏輯 (補回消失的按鈕)
+                    if c_no.button("↩️ 退件 (通知修改)", key="no_btn_final"):
+                        if not cmt:
+                            st.error("退件時請務必在評語欄填寫退件原因，以便面試者修改。")
+                        else:
+                            details = {'hr_comment': cmt}
+                            sys.hr_update_status(sel_email, "Returned", details)
+                            
+                            # 發送退件通知 Email
+                            fail_mail_body = f"""您好，關於您應徵的履歷，人資部已完成初步閱覽。
+目前履歷需要您進行補充或修改，請登入系統查看 HR 評語並修正。
+
+HR 說明：{cmt}
+修改後請再次點擊「送出」重新審核。"""
+                            
+                            send_email(sel_email, "【聯成電腦】履歷修改通知", fail_mail_body)
+                            st.warning("已退件，並已通知面試者修改。"); time.sleep(1); st.rerun()
             else:
                 st.info("目前無您所發送的面試邀請待審核")
         else:
@@ -888,6 +907,7 @@ if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
     else: candidate_page()
+
 
 
 
