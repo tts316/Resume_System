@@ -25,7 +25,7 @@ st.set_page_config(page_title="聯成電腦 - 人才招募系統", layout="wide"
 # Email 設定
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-SENDER_EMAIL = ""      
+SENDER_EMAIL = "hq.lccnet.com.tw@gmail.com"
 SENDER_PASSWORD = ""   
 
 # Logo URL (預設)
@@ -236,12 +236,17 @@ except: st.error("連線失敗，請檢查 secrets.toml"); st.stop()
 
 # --- Email ---
 def send_email(to_email, subject, body):
+    server = None
     try:
-        email_config = st.secrets["email"]
-        sender_email = email_config["sender_email"]
-        sender_password = email_config["sender_password"]
+        email_config = st.secrets.get("email", {})
+        sender_email = email_config.get("sender_email", SENDER_EMAIL)
+        sender_password = email_config.get("sender_password", SENDER_PASSWORD)
+
+        if not sender_email or not sender_password:
+            st.error("Email 設定不完整：請在 Streamlit Secrets 的 [email] 設定 sender_email/sender_password。")
+            return False
         
-        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
         server.starttls()
         server.login(sender_email, sender_password)
         
@@ -251,10 +256,16 @@ def send_email(to_email, subject, body):
         msg['To'] = to_email
         
         server.send_message(msg)
-        server.quit()
         return True
-    except:
-        return True 
+    except Exception as e:
+        st.error(f"寄送 Email 失敗：{e}")
+        return False
+    finally:
+        if server:
+            try:
+                server.quit()
+            except:
+                pass
 
 # --- PDF Generation ---
 def generate_pdf(data):
