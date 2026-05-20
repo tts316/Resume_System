@@ -1,0 +1,16 @@
+﻿# Sensitive credentials
+*.json
+*.toml
+*.toml.txt
+*.gsheet
+
+# Temp/system files
+.tmp.drivedownload/
+.tmp.driveupload/
+__pycache__/
+
+# Historical version files
+app0110*.py
+app0112*.py
+app0113*.py
+app0119*.py
