@@ -833,3 +833,10 @@ def candidate_page():
                 hr = user.get('creator', '')
                 if hr and '@' in str(hr): send_email(hr, f"履歷送審: {n_cn}", f"求職者 {n_cn} 已送出履歷，請登入系統審閱。")
                 st.success("已送出"); time.sleep(1); st.rerun()
+
+# --- Entry ---
+if 'user' not in st.session_state: st.session_state.user = None
+if st.session_state.user is None: login_page()
+else:
+    if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
+    else: candidate_page()
