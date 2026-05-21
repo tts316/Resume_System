@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 import time
@@ -8,7 +8,6 @@ import io
 from email.mime.text import MIMEText
 import gspread
 from google.oauth2.service_account import Credentials
-from streamlit_autorefresh import st_autorefresh
 import re
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
