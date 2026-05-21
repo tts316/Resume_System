@@ -453,7 +453,7 @@ def admin_page():
                         
                         if row['status'] == "Approved":
                             pdf_data = generate_pdf(row.to_dict())
-                            st.download_button("📥 下載完整 PDF", pdf_data, f"{row['name_cn']}_履歷.pdf", "application/pdf")
+                            st.download_button("📥 下載完整 PDF", pdf_data, f"{row['name_cn']}_履歷.pdf", "application/pdf", key=f"dl_pdf_{row['email']}")
                             st.divider()
 
                         st.markdown("#### 📄 履歷內容 (唯讀)")
@@ -507,7 +507,7 @@ def admin_page():
 
                         st.markdown("**【自傳】**")
                         st.write(f"**技能**: {row.get('skills')}")
-                        st.text_area("自傳", value=row['self_intro'], disabled=True, height=150)
+                        st.text_area("自傳", value=str(row.get('self_intro','')), disabled=True, height=150, key=f"intro_ta_{row['email']}")
 
                         st.divider()
                         st.write("#### 👨‍⚖️ 審核決定")
