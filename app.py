@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 import gspread
 from google.oauth2.service_account import Credentials
 from streamlit_autorefresh import st_autorefresh
+import re
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
@@ -715,7 +716,7 @@ def candidate_page():
                 primary_branch = st.selectbox(f"請選擇 {region} 的首選分校 (單選)", available_branches, index=p_idx, key="pri_sel")
                 
                 saved_rot = str(my_resume.get('accept_rotation', ''))
-                rot_idx = 0 if saved_rot == "是" else 1
+                rot_idx = 1 if saved_rot == "否" else 0
                 rot_val = st.radio("是否可配合輪調 (支援不同分校)？", ["是", "否"], index=rot_idx, horizontal=True, key="rot_sel")
                 
                 if rot_val == "是":
@@ -726,15 +727,18 @@ def candidate_page():
                             saved_backups = [x.strip() for x in content.split(", ")]
                         except: pass
                     backup_opts = [b for b in available_branches if b != primary_branch]
-                    valid_defaults = [b for b in saved_backups if b in backup_opts]
-                    selected_backups = st.multiselect("請勾選可配合輪調的分校 (複選)", backup_opts, default=valid_defaults, key="back_sel")
+                    st.caption("請勾選可配合輪調的分校 (可複選)：")
+                    selected_backups = []
+                    cb_cols = st.columns(min(4, max(1, len(backup_opts))))
+                    for idx, branch in enumerate(backup_opts):
+                        if cb_cols[idx % len(cb_cols)].checkbox(branch, value=(branch in saved_backups), key=f"rot_cb_{branch}"):
+                            selected_backups.append(branch)
                     if selected_backups: loc_val = f"{primary_branch} (輪調: {', '.join(selected_backups)})"
                     else: loc_val = primary_branch
-                else: loc_val = primary_branch
 
                 st.divider()
                 saved_shift = str(my_resume.get('shift_avail', ''))
-                shift_idx = 0 if saved_shift == "是" else 1
+                shift_idx = 1 if saved_shift == "否" else 0
                 shift_val = st.radio("是否可配合輪班 (同一分校不同時間)？", ["是", "否"], index=shift_idx, horizontal=True, key="shift_sel")
                 if shift_val == "否": st.warning("⚠️ 分公司職務通常需要配合輪班")
                 
@@ -777,7 +781,6 @@ def candidate_page():
         form_data = {
             'name_cn': n_cn, 'name_en': n_en, 'phone': phone, 'dob': dob, 'address': addr,
             'skills': skills, 'self_intro': intro,
-            'marital_status': m_status, 'blood_type': b_type_val,
             'shift_avail': shift_val, 'holiday_shift': holiday_shift, 'rotate_shift': rotate_shift,
             'family_support_shift': family_support_shift, 'care_dependent': care_dependent, 'financial_burden': financial_burden
         }
@@ -794,22 +797,40 @@ def candidate_page():
             st.success("已暫存"); time.sleep(1); st.rerun()
             
         if c_d.form_submit_button("🚀 送出"):
-            edu1_chk = st.session_state.get('edu_1_school_in', '')
-            exp1_chk = st.session_state.get('exp_1_co_in', '')
-            
-            if not n_cn or not phone: st.error("姓名與電話為必填")
-            elif not edu1_chk: st.error("⚠️ 請至少填寫一個「學歷 (學歷1)」")
-            elif r_type == "Branch" and rot_val=="是" and "輪調" not in loc_val: st.error("請勾選可配合輪調的分校")
+            edu1_school = st.session_state.get('edu_1_school_in', '').strip()
+            edu1_major  = st.session_state.get('edu_1_major_in',  '').strip()
+            edu1_start  = st.session_state.get('edu_1_start_in',  '').strip()
+            edu1_end    = st.session_state.get('edu_1_end_in',    '').strip()
+            height_val  = str(st.session_state.get('height', '')).strip()
+            weight_val  = str(st.session_state.get('weight', '')).strip()
+            n_en_val    = str(n_en).strip()
+            addr_val    = str(addr).strip()
+            def _yyyymm(s): return bool(re.match(r'^\d{4}/\d{1,2}$', s)) if s else False
+            def _num(s):
+                try: float(s); return True
+                except: return False
+            if not str(n_cn).strip() or not str(phone).strip():
+                st.error("中文姓名與手機為必填")
+            elif not addr_val:
+                st.error("通訊地址為必填")
+            elif n_en_val and not re.match(r'^[A-Za-z\s]+$', n_en_val):
+                st.error("英文姓名只能包含英文字母及空格")
+            elif height_val and not _num(height_val):
+                st.error("身高請填寫數字")
+            elif weight_val and not _num(weight_val):
+                st.error("體重請填寫數字")
+            elif not edu1_school:
+                st.error("⚠️ 學歷1：學校名稱為必填")
+            elif not edu1_major:
+                st.error("⚠️ 學歷1：科系名稱為必填")
+            elif not _yyyymm(edu1_start):
+                st.error("⚠️ 學歷1：入學年月格式須為 YYYY/MM（例如：2010/09）")
+            elif not _yyyymm(edu1_end):
+                st.error("⚠️ 學歷1：畢業年月格式須為 YYYY/MM（例如：2014/06）")
+            elif r_type == "Branch" and rot_val == "是" and "輪調" not in loc_val:
+                st.error("請至少勾選一個可配合輪調的分校")
             else:
                 sys.save_resume(user['email'], form_data, "Submitted")
                 hr = user.get('creator', '')
                 if hr and '@' in str(hr): send_email(hr, f"履歷送審: {n_cn}", f"求職者 {n_cn} 已送出履歷，請登入系統審閱。")
                 st.success("已送出"); time.sleep(1); st.rerun()
-
-# --- Entry ---
-st_autorefresh(interval=5 * 60 * 1000, limit=None, key="keepalive")
-if 'user' not in st.session_state: st.session_state.user = None
-if st.session_state.user is None: login_page()
-else:
-    if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
-    else: candidate_page()
