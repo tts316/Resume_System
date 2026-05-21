@@ -264,44 +264,36 @@ def generate_pdf(data):
         ('LEFTPADDING',   (0,0), (-1,-1), 6),
     ])
 
+    # ── 輔助：把文字包成 Paragraph，長文字自動換行不超出格線 ────────
+    styleC = ParagraphStyle('Cell', fontName=font_name, fontSize=8, leading=11)
+
+    def wp(text):
+        return Paragraph(str(text) if text else '', styleC)
+
     # ── 標題 ──────────────────────────────────────────────────────
     title = "聯成電腦面試人員履歷表" if data.get('resume_type') != 'Branch' else "聯成電腦 (分公司) 面試人員履歷表"
     elements.append(Paragraph(title, styleH))
     elements.append(Spacer(1, 8))
 
-    # ── 1. 基本資料 + 照片欄 ──────────────────────────────────────
+    # ── 1. 基本資料（全寬 535pt，無照片欄）──────────────────────
     elements.append(sec_hdr("▌ 基本資料"))
     elements.append(Spacer(1, 2))
 
     p_data = [
-        ["姓　名", f"{data.get('name_cn','')}  {data.get('name_en','')}", "應徵職務", "一般人員"],
-        ["電子信箱", data.get('email',''), "聯絡電話", data.get('phone','')],
-        ["出生日期", data.get('dob',''), "婚姻/血型", f"{data.get('marital_status','')} / {data.get('blood_type','')}"],
-        ["通訊地址", data.get('address',''), "緊急聯絡", f"{data.get('emergency_contact','')} {data.get('emergency_phone','')}"],
-        ["身高/體重", f"{data.get('height','')} cm / {data.get('weight','')} kg", "交通方式", f"{data.get('commute_method','')} 約{data.get('commute_time','')}分"],
+        ["姓　名",   wp(f"{data.get('name_cn','')}  {data.get('name_en','')}"),
+         "應徵職務", wp("一般人員")],
+        ["電子信箱", wp(data.get('email','')),
+         "聯絡電話", wp(data.get('phone',''))],
+        ["出生日期", wp(data.get('dob','')),
+         "婚姻/血型", wp(f"{data.get('marital_status','')} / {data.get('blood_type','')}")],
+        ["通訊地址", wp(data.get('address','')),
+         "緊急聯絡", wp(f"{data.get('emergency_contact','')} {data.get('emergency_phone','')}")],
+        ["身高/體重", wp(f"{data.get('height','')} cm / {data.get('weight','')} kg"),
+         "交通方式", wp(f"{data.get('commute_method','')} 約{data.get('commute_time','')}分")],
     ]
-    info_tbl = Table(p_data, colWidths=[65, 160, 65, 160])
+    info_tbl = Table(p_data, colWidths=[75, 192, 75, 193])
     info_tbl.setStyle(lbl_style)
-
-    photo_tbl = Table([["貼\n照\n片"]], colWidths=[85], rowHeights=[115])
-    photo_tbl.setStyle(TableStyle([
-        ('BOX',       (0,0), (-1,-1), 1,  colors.black),
-        ('ALIGN',     (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN',    (0,0), (-1,-1), 'MIDDLE'),
-        ('FONTNAME',  (0,0), (-1,-1), font_name),
-        ('FONTSIZE',  (0,0), (-1,-1), 14),
-        ('TEXTCOLOR', (0,0), (-1,-1), colors.grey),
-    ]))
-
-    outer_tbl = Table([[info_tbl, photo_tbl]], colWidths=[450, 85])
-    outer_tbl.setStyle(TableStyle([
-        ('VALIGN',        (0,0), (-1,-1), 'TOP'),
-        ('LEFTPADDING',   (0,0), (-1,-1), 0),
-        ('RIGHTPADDING',  (0,0), (-1,-1), 0),
-        ('TOPPADDING',    (0,0), (-1,-1), 0),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-    ]))
-    elements.append(outer_tbl)
+    elements.append(info_tbl)
     elements.append(Spacer(1, 8))
 
     # ── 2. 學歷 ───────────────────────────────────────────────────
@@ -311,15 +303,15 @@ def generate_pdf(data):
         s = data.get(f'edu_{i}_school', '')
         if not s: continue
         s_date = f"{data.get(f'edu_{i}_start','')} ~ {data.get(f'edu_{i}_end','')}"
-        edu_data.append([s_date, s, data.get(f'edu_{i}_major',''),
-                         data.get(f'edu_{i}_degree',''), data.get(f'edu_{i}_state','')])
+        edu_data.append([wp(s_date), wp(s), wp(data.get(f'edu_{i}_major','')),
+                         wp(data.get(f'edu_{i}_degree','')), wp(data.get(f'edu_{i}_state',''))])
     t2 = Table(edu_data, colWidths=[100, 155, 130, 80, 70])
     t2.setStyle(TableStyle([
         ('FONTNAME',      (0,0), (-1,-1), font_name),
         ('FONTSIZE',      (0,0), (-1,-1), 9),
         ('GRID',          (0,0), (-1,-1), 0.5, colors.grey),
         ('BACKGROUND',    (0,0), (-1, 0), LBL_BG),
-        ('ALIGN',         (0,0), (-1,-1), 'CENTER'),
+        ('ALIGN',         (0,0), (-1,-1), 'LEFT'),
         ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
         ('TOPPADDING',    (0,0), (-1,-1), 4),
         ('BOTTOMPADDING', (0,0), (-1,-1), 4),
@@ -330,14 +322,18 @@ def generate_pdf(data):
 
     # ── 3. 工作經歷 ───────────────────────────────────────────────
     elements.append(sec_hdr("▌ 工作經歷"))
+    styleXS = ParagraphStyle('XS', fontName=font_name, fontSize=7, leading=10)
+    def wpx(text):
+        return Paragraph(str(text) if text else '', styleXS)
     exp_data = [["起訖年月", "公司名稱", "職稱", "主管/電話", "薪資", "離職原因"]]
     for i in range(1, 5):
         co = data.get(f'exp_{i}_co', '')
         if not co: continue
         s_date = f"{data.get(f'exp_{i}_start','')} ~ {data.get(f'exp_{i}_end','')}"
         boss = f"{data.get(f'exp_{i}_boss','')} {data.get(f'exp_{i}_phone','')}"
-        exp_data.append([s_date, co, data.get(f'exp_{i}_title',''), boss,
-                         data.get(f'exp_{i}_salary',''), data.get(f'exp_{i}_reason','')])
+        exp_data.append([wpx(s_date), wpx(co), wpx(data.get(f'exp_{i}_title','')),
+                         wpx(boss), wpx(data.get(f'exp_{i}_salary','')),
+                         wpx(data.get(f'exp_{i}_reason',''))])
     t3 = Table(exp_data, colWidths=[80, 100, 70, 110, 55, 120])
     t3.setStyle(TableStyle([
         ('FONTNAME',      (0,0), (-1,-1), font_name),
@@ -356,12 +352,12 @@ def generate_pdf(data):
     # ── 4. 其他資料 ───────────────────────────────────────────────
     elements.append(sec_hdr("▌ 其他資料"))
     other_data = [
-        ["應徵管道", data.get('source',''),         "任職親友", data.get('relative_name','')],
-        ["補教經驗", data.get('teach_exp',''),       "出國史",   data.get('travel_history','')],
-        ["兵　　役", data.get('military_status',''), "慢性病",   data.get('chronic_disease','')],
-        ["獨力扶養", data.get('family_support',''),  "獨力負擔", data.get('family_debt','')],
+        ["應徵管道", wp(data.get('source','')),         "任職親友", wp(data.get('relative_name',''))],
+        ["補教經驗", wp(data.get('teach_exp','')),       "出國史",   wp(data.get('travel_history',''))],
+        ["兵　　役", wp(data.get('military_status','')), "慢性病",   wp(data.get('chronic_disease',''))],
+        ["獨力扶養", wp(data.get('family_support','')),  "獨力負擔", wp(data.get('family_debt',''))],
     ]
-    t4 = Table(other_data, colWidths=[65, 200, 65, 205])
+    t4 = Table(other_data, colWidths=[65, 202, 65, 203])
     t4.setStyle(lbl_style)
     elements.append(Spacer(1, 2))
     elements.append(t4)
