@@ -218,134 +218,208 @@ def generate_pdf(data):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
     elements = []
-    
+
+    # ── 字型 ──────────────────────────────────────────────────────
     font_name = 'Helvetica'
     try:
         pdfmetrics.registerFont(TTFont('TaipeiSans', 'TaipeiSansTCBeta-Regular.ttf'))
         font_name = 'TaipeiSans'
     except: pass
 
-    styles = getSampleStyleSheet()
-    styleN = ParagraphStyle('Normal', fontName=font_name, fontSize=10, leading=14)
-    styleH = ParagraphStyle('Heading1', fontName=font_name, fontSize=18, leading=22, alignment=TA_CENTER)
-    
-    title = "聯成電腦面試人員履歷表" if data.get('resume_type') != 'Branch' else "聯成電腦 (分公司) 面試人員履歷表"
-    elements.append(Paragraph(title, styleH))
-    elements.append(Spacer(1, 12))
+    # ── 色彩 ──────────────────────────────────────────────────────
+    HDR_BG = colors.HexColor('#1F3864')   # 深藍 – 區塊標題背景
+    LBL_BG = colors.HexColor('#BDD7EE')   # 淡藍 – 標籤欄背景
 
-    tbl_style = TableStyle([
-        ('FONTNAME', (0,0), (-1,-1), font_name),
-        ('FONTSIZE', (0,0), (-1,-1), 10),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (0,-1), colors.lightgrey),
-        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('PADDING', (0,0), (-1,-1), 6),
+    # ── 樣式 ──────────────────────────────────────────────────────
+    styleN = ParagraphStyle('Normal', fontName=font_name, fontSize=10, leading=14)
+    styleH = ParagraphStyle('Heading1', fontName=font_name, fontSize=16, leading=20, alignment=TA_CENTER)
+    styleS = ParagraphStyle('Small',   fontName=font_name, fontSize=9,  leading=13)
+
+    # ── 輔助：深藍色區塊標題列 ────────────────────────────────────
+    def sec_hdr(text, width=535):
+        t = Table([[text]], colWidths=[width])
+        t.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,-1), HDR_BG),
+            ('TEXTCOLOR',     (0,0), (-1,-1), colors.white),
+            ('FONTNAME',      (0,0), (-1,-1), font_name),
+            ('FONTSIZE',      (0,0), (-1,-1), 10),
+            ('TOPPADDING',    (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('LEFTPADDING',   (0,0), (-1,-1), 8),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 8),
+        ]))
+        return t
+
+    # ── 共用標籤欄樣式（4欄表格：col 0, col 2 為標籤）────────────
+    lbl_style = TableStyle([
+        ('FONTNAME',      (0,0), (-1,-1), font_name),
+        ('FONTSIZE',      (0,0), (-1,-1), 9),
+        ('GRID',          (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND',    (0,0), (0,-1),  LBL_BG),
+        ('BACKGROUND',    (2,0), (2,-1),  LBL_BG),
+        ('ALIGN',         (0,0), (-1,-1), 'LEFT'),
+        ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING',    (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING',   (0,0), (-1,-1), 6),
     ])
 
-    # 1. 基本資料
+    # ── 標題 ──────────────────────────────────────────────────────
+    title = "聯成電腦面試人員履歷表" if data.get('resume_type') != 'Branch' else "聯成電腦 (分公司) 面試人員履歷表"
+    elements.append(Paragraph(title, styleH))
+    elements.append(Spacer(1, 8))
+
+    # ── 1. 基本資料 + 照片欄 ──────────────────────────────────────
+    elements.append(sec_hdr("▌ 基本資料"))
+    elements.append(Spacer(1, 2))
+
     p_data = [
-        ["姓名", f"{data.get('name_cn','')} ({data.get('name_en','')})", "應徵職務", "一般人員"],
-        ["Email", data.get('email',''), "電話", f"{data.get('phone','')} / {data.get('home_phone','')}"],
-        ["生日", data.get('dob',''), "婚姻/血型", f"{data.get('marital_status','')} / {data.get('blood_type','')}"],
-        ["地址", data.get('address',''), "緊急聯絡", f"{data.get('emergency_contact','')} ({data.get('emergency_phone','')})"],
-        ["身高/體重", f"{data.get('height','')} cm / {data.get('weight','')} kg", "交通", f"{data.get('commute_method','')} ({data.get('commute_time','')}分)"]
+        ["姓　名", f"{data.get('name_cn','')}  {data.get('name_en','')}", "應徵職務", "一般人員"],
+        ["電子信箱", data.get('email',''), "聯絡電話", data.get('phone','')],
+        ["出生日期", data.get('dob',''), "婚姻/血型", f"{data.get('marital_status','')} / {data.get('blood_type','')}"],
+        ["通訊地址", data.get('address',''), "緊急聯絡", f"{data.get('emergency_contact','')} {data.get('emergency_phone','')}"],
+        ["身高/體重", f"{data.get('height','')} cm / {data.get('weight','')} kg", "交通方式", f"{data.get('commute_method','')} 約{data.get('commute_time','')}分"],
     ]
-    t1 = Table(p_data, colWidths=[60, 210, 60, 200])
-    t1.setStyle(tbl_style)
-    elements.append(t1)
-    elements.append(Spacer(1, 10))
+    info_tbl = Table(p_data, colWidths=[65, 160, 65, 160])
+    info_tbl.setStyle(lbl_style)
 
-    # 2. 學歷
-    elements.append(Paragraph("【學歷】", styleN))
-    edu_data = [["起訖", "學校名稱", "科系", "學位", "狀態"]]
+    photo_tbl = Table([["貼\n照\n片"]], colWidths=[85], rowHeights=[115])
+    photo_tbl.setStyle(TableStyle([
+        ('BOX',       (0,0), (-1,-1), 1,  colors.black),
+        ('ALIGN',     (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN',    (0,0), (-1,-1), 'MIDDLE'),
+        ('FONTNAME',  (0,0), (-1,-1), font_name),
+        ('FONTSIZE',  (0,0), (-1,-1), 14),
+        ('TEXTCOLOR', (0,0), (-1,-1), colors.grey),
+    ]))
+
+    outer_tbl = Table([[info_tbl, photo_tbl]], colWidths=[450, 85])
+    outer_tbl.setStyle(TableStyle([
+        ('VALIGN',        (0,0), (-1,-1), 'TOP'),
+        ('LEFTPADDING',   (0,0), (-1,-1), 0),
+        ('RIGHTPADDING',  (0,0), (-1,-1), 0),
+        ('TOPPADDING',    (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+    ]))
+    elements.append(outer_tbl)
+    elements.append(Spacer(1, 8))
+
+    # ── 2. 學歷 ───────────────────────────────────────────────────
+    elements.append(sec_hdr("▌ 學歷"))
+    edu_data = [["起訖年月", "學校名稱", "科系", "學位", "狀態"]]
     for i in range(1, 4):
-        s_date = f"{data.get(f'edu_{i}_start','')}~{data.get(f'edu_{i}_end','')}"
-        edu_data.append([
-            s_date,
-            data.get(f'edu_{i}_school',''), 
-            data.get(f'edu_{i}_major',''), 
-            data.get(f'edu_{i}_degree',''), 
-            data.get(f'edu_{i}_state','')
-        ])
-    t2 = Table(edu_data, colWidths=[100, 150, 130, 80, 70])
+        s = data.get(f'edu_{i}_school', '')
+        if not s: continue
+        s_date = f"{data.get(f'edu_{i}_start','')} ~ {data.get(f'edu_{i}_end','')}"
+        edu_data.append([s_date, s, data.get(f'edu_{i}_major',''),
+                         data.get(f'edu_{i}_degree',''), data.get(f'edu_{i}_state','')])
+    t2 = Table(edu_data, colWidths=[100, 155, 130, 80, 70])
     t2.setStyle(TableStyle([
-        ('FONTNAME', (0,0), (-1,-1), font_name),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('FONTSIZE', (0,0), (-1,-1), 9),
+        ('FONTNAME',      (0,0), (-1,-1), font_name),
+        ('FONTSIZE',      (0,0), (-1,-1), 9),
+        ('GRID',          (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND',    (0,0), (-1, 0), LBL_BG),
+        ('ALIGN',         (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING',    (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
     ]))
+    elements.append(Spacer(1, 2))
     elements.append(t2)
-    elements.append(Spacer(1, 10))
+    elements.append(Spacer(1, 8))
 
-    # 3. 經歷
-    elements.append(Paragraph("【工作經歷】", styleN))
-    exp_data = [["起訖", "公司名稱", "職位", "主管/電話", "薪資", "離職原因"]]
+    # ── 3. 工作經歷 ───────────────────────────────────────────────
+    elements.append(sec_hdr("▌ 工作經歷"))
+    exp_data = [["起訖年月", "公司名稱", "職稱", "主管/電話", "薪資", "離職原因"]]
     for i in range(1, 5):
-        s_date = f"{data.get(f'exp_{i}_start','')}~{data.get(f'exp_{i}_end','')}"
-        boss = f"{data.get(f'exp_{i}_boss','')} ({data.get(f'exp_{i}_phone','')})"
-        exp_data.append([
-            s_date,
-            data.get(f'exp_{i}_co',''), 
-            data.get(f'exp_{i}_title',''), 
-            boss, 
-            data.get(f'exp_{i}_salary',''), 
-            data.get(f'exp_{i}_reason','')
-        ])
-    t3 = Table(exp_data, colWidths=[80, 100, 80, 100, 50, 120])
+        co = data.get(f'exp_{i}_co', '')
+        if not co: continue
+        s_date = f"{data.get(f'exp_{i}_start','')} ~ {data.get(f'exp_{i}_end','')}"
+        boss = f"{data.get(f'exp_{i}_boss','')} {data.get(f'exp_{i}_phone','')}"
+        exp_data.append([s_date, co, data.get(f'exp_{i}_title',''), boss,
+                         data.get(f'exp_{i}_salary',''), data.get(f'exp_{i}_reason','')])
+    t3 = Table(exp_data, colWidths=[80, 100, 70, 110, 55, 120])
     t3.setStyle(TableStyle([
-        ('FONTNAME', (0,0), (-1,-1), font_name),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('FONTNAME',      (0,0), (-1,-1), font_name),
+        ('FONTSIZE',      (0,0), (-1,-1), 8),
+        ('GRID',          (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND',    (0,0), (-1, 0), LBL_BG),
+        ('ALIGN',         (0,0), (-1,-1), 'LEFT'),
+        ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING',    (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
     ]))
+    elements.append(Spacer(1, 2))
     elements.append(t3)
-    elements.append(Spacer(1, 10))
+    elements.append(Spacer(1, 8))
 
-    # 4. 其他資訊
+    # ── 4. 其他資料 ───────────────────────────────────────────────
+    elements.append(sec_hdr("▌ 其他資料"))
     other_data = [
-        ["應徵管道", data.get('source',''), "任職親友", data.get('relative_name','')],
-        ["補教經驗", data.get('teach_exp',''), "出國史", data.get('travel_history','')],
-        ["兵役", data.get('military_status',''), "慢性病", data.get('chronic_disease','')],
-        ["獨力扶養", data.get('family_support',''), "獨力負擔", data.get('family_debt','')]
+        ["應徵管道", data.get('source',''),         "任職親友", data.get('relative_name','')],
+        ["補教經驗", data.get('teach_exp',''),       "出國史",   data.get('travel_history','')],
+        ["兵　　役", data.get('military_status',''), "慢性病",   data.get('chronic_disease','')],
+        ["獨力扶養", data.get('family_support',''),  "獨力負擔", data.get('family_debt','')],
     ]
-    t4 = Table(other_data, colWidths=[70, 195, 70, 195])
-    t4.setStyle(tbl_style)
+    t4 = Table(other_data, colWidths=[65, 200, 65, 205])
+    t4.setStyle(lbl_style)
+    elements.append(Spacer(1, 2))
     elements.append(t4)
-    elements.append(Spacer(1, 10))
+    elements.append(Spacer(1, 8))
 
+    # ── 5. 分公司排班（Branch 限定）──────────────────────────────
     if data.get('resume_type') == 'Branch':
-        elements.append(Paragraph("【分公司排班意願調查】", styleN))
+        elements.append(sec_hdr("▌ 分公司排班意願調查"))
         br_data = [
-            ["希望區域", data.get('branch_region','')],
-            ["希望分校", data.get('branch_location','')],
-            ["配合輪調", data.get('accept_rotation','')],
-            ["配合輪班", data.get('shift_avail','')],
-            ["國定假日輪值", data.get('holiday_shift','')],
+            ["希望區域",             data.get('branch_region','')],
+            ["希望分校",             data.get('branch_location','')],
+            ["配合輪調",             data.get('accept_rotation','')],
+            ["配合輪班",             data.get('shift_avail','')],
+            ["國定假日輪值",         data.get('holiday_shift','')],
             ["早晚輪班(9-18/14-22)", data.get('rotate_shift','')],
-            ["家人同意輪班", data.get('family_support_shift','')],
-            ["經濟/扶養需求", f"扶養: {data.get('care_dependent','')} / 負擔: {data.get('financial_burden','')}"]
+            ["家人同意輪班",         data.get('family_support_shift','')],
+            ["經濟/扶養需求",        f"扶養: {data.get('care_dependent','')} / 負擔: {data.get('financial_burden','')}"],
         ]
-        t5 = Table(br_data, colWidths=[150, 380])
+        t5 = Table(br_data, colWidths=[150, 385])
         t5.setStyle(TableStyle([
-            ('FONTNAME', (0,0), (-1,-1), font_name),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-            ('BACKGROUND', (0,0), (0,-1), colors.lightgrey),
+            ('FONTNAME',      (0,0), (-1,-1), font_name),
+            ('FONTSIZE',      (0,0), (-1,-1), 9),
+            ('GRID',          (0,0), (-1,-1), 0.5, colors.grey),
+            ('BACKGROUND',    (0,0), (0,-1),  LBL_BG),
+            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING',    (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('LEFTPADDING',   (0,0), (-1,-1), 6),
         ]))
+        elements.append(Spacer(1, 2))
         elements.append(t5)
-        elements.append(Spacer(1, 10))
+        elements.append(Spacer(1, 8))
 
-    elements.append(Paragraph("【專業技能與自傳】", styleN))
-    elements.append(Paragraph(f"技能：{data.get('skills','')}", styleN))
-    elements.append(Spacer(1, 5))
-    elements.append(Paragraph(f"自傳：{data.get('self_intro','')}", styleN))
-    elements.append(Spacer(1, 20))
+    # ── 6. 專業技能與自傳 ─────────────────────────────────────────
+    elements.append(sec_hdr("▌ 專業技能與自傳"))
+    bio_data = [
+        ["專業技能", Paragraph(str(data.get('skills','')),    styleS)],
+        ["自　　傳", Paragraph(str(data.get('self_intro','')), styleS)],
+    ]
+    t6 = Table(bio_data, colWidths=[65, 470])
+    t6.setStyle(TableStyle([
+        ('FONTNAME',      (0,0), (-1,-1), font_name),
+        ('FONTSIZE',      (0,0), (-1,-1), 9),
+        ('GRID',          (0,0), (-1,-1), 0.5, colors.grey),
+        ('BACKGROUND',    (0,0), (0,-1),  LBL_BG),
+        ('VALIGN',        (0,0), (-1,-1), 'TOP'),
+        ('TOPPADDING',    (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING',   (0,0), (-1,-1), 6),
+    ]))
+    elements.append(Spacer(1, 2))
+    elements.append(t6)
+    elements.append(Spacer(1, 16))
 
-    elements.append(Paragraph("_" * 80, styleN))
-    elements.append(Spacer(1, 10))
-    sign_text = "本人所填資料均屬事實，若有不實，願接受免職處分。     應徵人員親簽：______________________   日期：_____/_____/_____"
+    # ── 7. 簽名行 ─────────────────────────────────────────────────
+    elements.append(Paragraph("─" * 60, styleN))
+    elements.append(Spacer(1, 6))
+    sign_text = "本人所填資料均屬事實，若有不實，願接受免職處分。　　應徵人員親簽：＿＿＿＿＿＿＿＿＿　日期：　　　年　　月　　日"
     elements.append(Paragraph(sign_text, styleN))
 
     try:
@@ -451,10 +525,9 @@ def admin_page():
                     
                     with st.expander(f"{status_badge} {r_badge} {row['name_cn']} ({row['email']})"):
                         
-                        if row['status'] == "Approved":
-                            pdf_data = generate_pdf(row.to_dict())
-                            st.download_button("📥 下載完整 PDF", pdf_data, f"{row['name_cn']}_履歷.pdf", "application/pdf", key=f"dl_pdf_{row['email']}")
-                            st.divider()
+                        pdf_data = generate_pdf(row.to_dict())
+                        st.download_button("📥 下載完整 PDF", pdf_data, f"{row['name_cn']}_履歷.pdf", "application/pdf", key=f"dl_pdf_{row['email']}")
+                        st.divider()
 
                         st.markdown("#### 📄 履歷內容 (唯讀)")
                         
