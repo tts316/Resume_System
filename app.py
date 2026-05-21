@@ -466,7 +466,7 @@ def admin_page():
     user = st.session_state.user
     render_sidebar(user)
     st.header(f"👨‍💼 管理後台")
-    tabs = ["📧 發送邀請", "📋 履歷審核"]
+    tabs = ["📧 發送邀請", "📋 履歷審核", "📊 表單管理"]
     if user['role'] == 'admin': tabs.append("⚙️ 設定")
     current_tab = st.tabs(tabs)
     
@@ -644,8 +644,106 @@ def admin_page():
 
             else: st.info("無待審履歷")
 
+    # ── 表單管理 ──────────────────────────────────────────────────
+    with current_tab[2]:
+        st.subheader("表單發送管理")
+
+        STATUS_MAP = {
+            "New":       ("已發送",    "🔵"),
+            "Draft":     ("已發送",    "🔵"),
+            "Submitted": ("已回覆履歷", "🟡"),
+            "Approved":  ("已審查核可", "✅"),
+            "Returned":  ("已退件",    "↩️"),
+        }
+
+        df_u2 = sys.get_df("users")
+        df_r2 = sys.get_df("resumes")
+
+        if df_u2.empty:
+            st.info("尚無資料")
+        else:
+            cands = df_u2[df_u2['role'] == 'candidate'].copy()
+            if user['role'] == 'pm':
+                cands = cands[cands['creator_email'] == user['email']]
+
+            if cands.empty:
+                st.info("尚無邀請記錄")
+            else:
+                if not df_r2.empty:
+                    r_cols = [c for c in ['email','status','name_cn','interview_dept','resume_type','hr_comment'] if c in df_r2.columns]
+                    merged2 = cands.merge(df_r2[r_cols], on='email', how='left')
+                else:
+                    merged2 = cands.copy()
+                    for col in ['status','name_cn','interview_dept','resume_type','hr_comment']:
+                        merged2[col] = ''
+
+                merged2['status'] = merged2['status'].fillna('New').replace('', 'New')
+                merged2['name_cn'] = merged2.apply(lambda r: r['name_cn'] if str(r.get('name_cn','')).strip() else r['name'], axis=1)
+                merged2['interview_dept'] = merged2.apply(
+                    lambda r: r.get('interview_dept','') if str(r.get('interview_dept','')).strip()
+                              else ("總公司" if str(r.get('resume_type','')) == 'HQ' else
+                                    "分公司" if str(r.get('resume_type','')) == 'Branch' else '—'),
+                    axis=1
+                )
+                merged2['created_at'] = pd.to_datetime(merged2['created_at'], errors='coerce')
+                merged2['ym'] = merged2['created_at'].dt.strftime('%Y-%m').fillna('未知')
+                merged2 = merged2.sort_values('created_at', ascending=False)
+
+                try:    app_url = st.secrets["email"]["app_url"]
+                except: app_url = "https://share.streamlit.io/"
+
+                for ym, grp in merged2.groupby('ym', sort=False):
+                    try:    mlabel = datetime.strptime(ym, '%Y-%m').strftime('%Y 年 %m 月')
+                    except: mlabel = ym
+                    is_first = (ym == merged2['ym'].iloc[0])
+                    with st.expander(f"📅 {mlabel}（共 {len(grp)} 筆）", expanded=is_first):
+                        # 表頭
+                        hc = st.columns([2, 2, 2, 2, 2])
+                        for h, t in zip(hc, ["發送日期", "求職者姓名", "面試單位", "狀態", "操作"]):
+                            h.markdown(f"**{t}**")
+                        st.divider()
+
+                        for _, fr in grp.iterrows():
+                            raw_st  = str(fr.get('status', 'New'))
+                            lbl, badge = STATUS_MAP.get(raw_st, (raw_st, "❓"))
+                            sent_date = fr['created_at'].strftime('%Y/%m/%d') if pd.notna(fr['created_at']) else '—'
+                            cand_email = str(fr['email']).strip()
+                            cand_name  = str(fr.get('name_cn', fr['name'])).strip()
+
+                            rc = st.columns([2, 2, 2, 2, 2])
+                            rc[0].write(sent_date)
+                            rc[1].write(cand_name)
+                            rc[2].write(str(fr.get('interview_dept', '—')))
+                            rc[3].write(f"{badge} {lbl}")
+
+                            btn_key = f"resend_{cand_email}"
+                            if raw_st in ('New', 'Draft'):
+                                if rc[4].button("📧 催促填寫", key=btn_key):
+                                    body = (f"{cand_name} 您好，\n\n"
+                                            f"提醒您尚未完成履歷填寫，請盡快登入系統填寫並送出。\n"
+                                            f"系統連結：{app_url}\n"
+                                            f"帳號：{cand_email}\n密碼：{cand_email}\n\n"
+                                            f"如有任何問題，歡迎聯繫人資部。\n聯成電腦 人資部")
+                                    ok = send_email(cand_email, "【聯成電腦】提醒您完成履歷填寫", body)
+                                    if ok: st.toast(f"已發送催促通知給 {cand_name}", icon="✅")
+                                    else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
+                            elif raw_st == 'Returned':
+                                reason = str(fr.get('hr_comment', '')).strip()
+                                if rc[4].button("📧 催促修改", key=btn_key):
+                                    body = (f"{cand_name} 您好，\n\n"
+                                            f"您的履歷已被退回，請登入系統依照退件原因修改後重新送出。\n"
+                                            f"退件原因：{reason or '請參閱系統說明'}\n\n"
+                                            f"系統連結：{app_url}\n"
+                                            f"帳號：{cand_email}\n\n"
+                                            f"請盡快完成修改，謝謝。\n聯成電腦 人資部")
+                                    ok = send_email(cand_email, "【聯成電腦】請修改履歷後重新送出", body)
+                                    if ok: st.toast(f"已發送催促通知給 {cand_name}", icon="✅")
+                                    else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
+                            else:
+                                rc[4].write("—")
+
     if user['role'] == 'admin':
-        with current_tab[2]:
+        with current_tab[3]:
             up = st.file_uploader("Logo 更新", type=['png','jpg'])
             if up and st.button("更新"):
                 b64 = base64.b64encode(up.getvalue()).decode()
