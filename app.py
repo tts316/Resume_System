@@ -5,6 +5,8 @@ import time
 import base64
 import smtplib
 import io
+import os
+import json
 from email.mime.text import MIMEText
 import gspread
 from google.oauth2.service_account import Credentials
@@ -40,6 +42,25 @@ BRANCH_DATA = {
     "南二區": ["高雄", "鳳山", "楠梓", "屏東"]
 }
 
+# --- 機密設定讀取：雲端(Cloud Run)優先讀環境變數，本機/Streamlit Cloud fallback 讀 secrets.toml ---
+def _secret(env_key, *secret_path, default=None):
+    val = os.environ.get(env_key)
+    if val not in (None, ""):
+        return val
+    try:
+        node = st.secrets
+        for k in secret_path:
+            node = node[k]
+        return node
+    except Exception:
+        return default
+
+def _gcp_creds_dict():
+    raw = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+    if raw:
+        return json.loads(raw)
+    return dict(st.secrets["gcp_service_account"])
+
 # --- 2. 資料庫核心 ---
 class ResumeDB:
     def __init__(self):
@@ -48,10 +69,10 @@ class ResumeDB:
     def connect(self):
         try:
             scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-            creds_dict = dict(st.secrets["gcp_service_account"])
+            creds_dict = _gcp_creds_dict()
             creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
             self.client = gspread.authorize(creds)
-            sheet_url = st.secrets["sheet_config"]["spreadsheet_url"]
+            sheet_url = _secret("SPREADSHEET_URL", "sheet_config", "spreadsheet_url")
             self.sh = self.client.open_by_url(sheet_url)
             self.ws_users = self.sh.worksheet("users")
             self.ws_resumes = self.sh.worksheet("resumes")
@@ -203,8 +224,8 @@ except: st.error("連線失敗，請檢查 secrets.toml"); st.stop()
 # --- Email ---
 def send_email(to_email, subject, body):
     try:
-        email_config = st.secrets["email"]
-        sender_email = email_config["sender_email"]; sender_password = email_config["sender_password"]
+        sender_email = _secret("EMAIL_SENDER", "email", "sender_email")
+        sender_password = _secret("EMAIL_PASSWORD", "email", "sender_password")
         server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
         server.login(sender_email, sender_password)
         msg = MIMEText(body, 'plain', 'utf-8'); msg['Subject'] = subject; msg['From'] = sender_email; msg['To'] = to_email
@@ -482,8 +503,7 @@ def admin_page():
                     type_code = "Branch" if "分公司" in r_type else "HQ"
                     succ, msg = sys.create_user(user['email'], c_email, c_name, "candidate", type_code)
                     if succ:
-                        try: link = st.secrets["email"]["app_url"]
-                        except: link = "https://share.streamlit.io/"
+                        link = _secret("APP_URL", "email", "app_url", default="https://share.streamlit.io/")
                         body = f"請登入填寫履歷：{link}\n帳號：{c_email}\n密碼：{c_email}"
                         send_email(c_email, "面試邀請", body)
                         st.success(f"已發送給 {c_name}")
@@ -689,8 +709,7 @@ def admin_page():
                 merged2['ym'] = merged2['created_at'].dt.strftime('%Y-%m').fillna('未知')
                 merged2 = merged2.sort_values('created_at', ascending=False)
 
-                try:    app_url = st.secrets["email"]["app_url"]
-                except: app_url = "https://share.streamlit.io/"
+                app_url = _secret("APP_URL", "email", "app_url", default="https://share.streamlit.io/")
 
                 for ym, grp in merged2.groupby('ym', sort=False):
                     try:    mlabel = datetime.strptime(ym, '%Y-%m').strftime('%Y 年 %m 月')
