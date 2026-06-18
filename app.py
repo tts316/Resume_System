@@ -503,7 +503,7 @@ def admin_page():
                     type_code = "Branch" if "分公司" in r_type else "HQ"
                     succ, msg = sys.create_user(user['email'], c_email, c_name, "candidate", type_code)
                     if succ:
-                        link = _secret("APP_URL", "email", "app_url", default="https://share.streamlit.io/")
+                        link = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
                         body = f"請登入填寫履歷：{link}\n帳號：{c_email}\n密碼：{c_email}"
                         send_email(c_email, "面試邀請", body)
                         st.success(f"已發送給 {c_name}")
@@ -709,7 +709,7 @@ def admin_page():
                 merged2['ym'] = merged2['created_at'].dt.strftime('%Y-%m').fillna('未知')
                 merged2 = merged2.sort_values('created_at', ascending=False)
 
-                app_url = _secret("APP_URL", "email", "app_url", default="https://share.streamlit.io/")
+                app_url = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
 
                 for ym, grp in merged2.groupby('ym', sort=False):
                     try:    mlabel = datetime.strptime(ym, '%Y-%m').strftime('%Y 年 %m 月')
