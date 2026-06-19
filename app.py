@@ -22,6 +22,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # --- 1. 系統設定 ---
 st.set_page_config(page_title="聯成電腦 - 人才招募系統", layout="wide", page_icon="📝")
+st.markdown("<style>div[data-testid='stStatusWidget']{display:none}</style>", unsafe_allow_html=True)
 
 # Email 設定
 SMTP_SERVER = "smtp.gmail.com"
