@@ -8,6 +8,7 @@ import io
 import os
 import json
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import gspread
 from google.oauth2.service_account import Credentials
 import re
@@ -23,6 +24,20 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 # --- 1. 系統設定 ---
 st.set_page_config(page_title="聯成電腦 - 人才招募系統", layout="wide", page_icon="📝")
 st.markdown("<style>div[data-testid='stStatusWidget']{display:none}</style>", unsafe_allow_html=True)
+st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+html,body,[class*="css"],.stMarkdown,.stTextInput input,.stSelectbox select{
+  font-family:'Noto Sans TC',sans-serif!important}
+.stButton>button[kind="primary"]{
+  background:#1F3864!important;border-color:#1F3864!important;color:#fff!important}
+.stButton>button[kind="primary"]:hover{background:#162a4a!important}
+.stMetric{border:1px solid #e0e8f5;border-radius:8px;padding:12px;background:#f8faff}
+@media(max-width:768px){
+  [data-testid="column"]{min-width:100%!important;flex:0 0 100%!important}
+  .stTextInput input,.stSelectbox>div[data-baseweb]{padding:10px 12px!important;font-size:16px!important}
+  .stRadio>div{gap:12px!important}
+}
+</style>""", unsafe_allow_html=True)
 
 # Email 設定
 SMTP_SERVER = "smtp.gmail.com"
@@ -222,14 +237,60 @@ def get_db(): return ResumeDB()
 try: sys = get_db()
 except: st.error("連線失敗，請檢查 secrets.toml"); st.stop()
 
+# --- AI (claude-api) ---
+try:
+    import anthropic as _anthropic
+    _ANTHROPIC_OK = True
+except ImportError:
+    _ANTHROPIC_OK = False
+
+def _ai_analyze_resume(row):
+    api_key = _secret("ANTHROPIC_API_KEY", "anthropic", "api_key")
+    if not api_key or not _ANTHROPIC_OK:
+        return None, "未設定 ANTHROPIC_API_KEY 或未安裝 anthropic 套件"
+    edu_parts = [f"{row.get(f'edu_{i}_school','')} {row.get(f'edu_{i}_major','')} ({row.get(f'edu_{i}_degree','')})"
+                 for i in range(1,4) if row.get(f'edu_{i}_school','')]
+    exp_parts = [f"{row.get(f'exp_{i}_start','')}~{row.get(f'exp_{i}_end','')} {row.get(f'exp_{i}_co','')} {row.get(f'exp_{i}_title','')} 薪{row.get(f'exp_{i}_salary','')}"
+                 for i in range(1,5) if row.get(f'exp_{i}_co','')]
+    prompt = f"""你是聯成電腦（台灣電腦培訓補習班龍頭）的資深人資顧問，請分析以下求職者履歷並提供評估。
+
+求職者：{row.get('name_cn','')}
+履歷類型：{'分公司門市' if row.get('resume_type')=='Branch' else '總公司內勤'}
+學歷：{'; '.join(edu_parts) or '未填'}
+工作經歷：{'; '.join(exp_parts) or '無'}
+專業技能：{str(row.get('skills',''))[:200] or '未填'}
+自傳摘要：{str(row.get('self_intro',''))[:300] or '未填'}
+
+請提供：
+1. **適合度評分** (1-10分)
+2. **主要優勢** (2-3點)
+3. **潛在風險** (1-2點)
+4. **建議面試問題** (3題)
+
+以繁體中文回答，格式清晰簡潔。"""
+    try:
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(model="claude-haiku-4-5", max_tokens=800,
+                                       messages=[{"role": "user", "content": prompt}])
+        return resp.content[0].text, None
+    except Exception as e:
+        return None, str(e)
+
 # --- Email ---
-def send_email(to_email, subject, body):
+def send_email(to_email, subject, body, html_body=None):
     try:
         sender_email = _secret("EMAIL_SENDER", "email", "sender_email")
         sender_password = _secret("EMAIL_PASSWORD", "email", "sender_password")
         server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
         server.login(sender_email, sender_password)
-        msg = MIMEText(body, 'plain', 'utf-8'); msg['Subject'] = subject; msg['From'] = sender_email; msg['To'] = to_email
+        if html_body:
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject; msg['From'] = sender_email; msg['To'] = to_email
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
+            msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+        else:
+            msg = MIMEText(body, 'plain', 'utf-8')
+            msg['Subject'] = subject; msg['From'] = sender_email; msg['To'] = to_email
         server.send_message(msg); server.quit()
         return True
     except:
@@ -238,15 +299,38 @@ def send_email(to_email, subject, body):
 # --- PDF Generation ---
 def generate_pdf(data):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
-    elements = []
 
-    # ── 字型 ──────────────────────────────────────────────────────
+    # ── 字型（先決定，供頁首頁尾 callback 使用）─────────────────────
     font_name = 'Helvetica'
     try:
         pdfmetrics.registerFont(TTFont('TaipeiSans', 'TaipeiSansTCBeta-Regular.ttf'))
         font_name = 'TaipeiSans'
     except: pass
+
+    # ── 頁首頁尾 callback（D2）────────────────────────────────────
+    def _draw_page(c, doc):
+        c.saveState()
+        c.setFont(font_name, 7)
+        c.setFillColor(colors.HexColor('#1F3864'))
+        c.drawString(30, A4[1] - 16, "聯成電腦 人才招募系統")
+        c.drawRightString(A4[0] - 30, A4[1] - 16, datetime.now().strftime('%Y/%m/%d'))
+        c.setStrokeColor(colors.HexColor('#AAAAAA'))
+        c.setLineWidth(0.3)
+        c.line(30, A4[1] - 20, A4[0] - 30, A4[1] - 20)
+        c.line(30, 20, A4[0] - 30, 20)
+        c.setFont(font_name, 7)
+        c.setFillColor(colors.HexColor('#888888'))
+        c.drawCentredString(A4[0] / 2, 8, f"第 {doc.page} 頁")
+        c.restoreState()
+
+    _title_text = "聯成電腦面試人員履歷表" if data.get('resume_type') != 'Branch' else "聯成電腦 (分公司) 面試人員履歷表"
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=42, bottomMargin=30)
+    # ── PDF Metadata（D4）─────────────────────────────────────────
+    doc.title = _title_text
+    doc.author = "聯成電腦 人資部"
+    doc.subject = "面試人員履歷表"
+    doc.creator = "聯成電腦人才招募系統"
+    elements = []
 
     # ── 色彩 ──────────────────────────────────────────────────────
     HDR_BG = colors.HexColor('#1F3864')   # 深藍 – 區塊標題背景
@@ -446,7 +530,7 @@ def generate_pdf(data):
         elements.append(qr)
     except: pass
 
-    doc.build(elements)
+    doc.build(elements, onFirstPage=_draw_page, onLaterPages=_draw_page)
     buffer.seek(0)
     return buffer
 
@@ -474,20 +558,45 @@ def render_sidebar(user):
 
 # --- Pages ---
 def login_page():
-    st.markdown("## 📝 聯成電腦 - 人才招募系統")
-    c1, c2 = st.columns(2)
-    with c1:
-        email = st.text_input("Email"); pwd = st.text_input("密碼", type="password")
-        if st.button("登入", type="primary"):
+    st.markdown("""<style>
+    .login-wrap{max-width:440px;margin:40px auto;padding:36px 40px;
+      background:white;border-radius:14px;box-shadow:0 4px 24px rgba(31,56,100,.13)}
+    .login-wrap h3{color:#1F3864;margin-bottom:4px}
+    </style>""", unsafe_allow_html=True)
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.image(LOGO_URL, use_container_width=True)
+        st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+        st.markdown("### 人才招募系統登入")
+        email = st.text_input("📧 Email 帳號", placeholder="your@email.com")
+        pwd = st.text_input("🔒 密碼", type="password", placeholder="預設密碼為您的 Email")
+        if st.button("登入", type="primary", use_container_width=True):
             user = sys.verify_login(email, pwd)
             if user: st.session_state.user = user; st.rerun()
-            else: st.error("錯誤")
-    with c2: st.info("預設密碼為您的 Email")
+            else: st.error("帳號或密碼錯誤，預設密碼為 Email 帳號")
+        st.caption("如有問題請聯繫人資部 ◆ © 聯成電腦")
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def admin_page():
     user = st.session_state.user
     render_sidebar(user)
     st.header(f"👨‍💼 管理後台")
+
+    # C1: 狀態總覽 Dashboard
+    try:
+        _df_dash = sys.get_df("resumes")
+        if not _df_dash.empty:
+            _submitted = int((_df_dash['status'] == 'Submitted').sum())
+            _approved  = int((_df_dash['status'] == 'Approved').sum())
+            _returned  = int((_df_dash['status'] == 'Returned').sum())
+            _total     = len(_df_dash)
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("⏳ 待審履歷", _submitted)
+            mc2.metric("✅ 已核可", _approved)
+            mc3.metric("↩️ 已退件", _returned)
+            mc4.metric("📋 總邀請數", _total)
+    except: pass
+
     tabs = ["📧 發送邀請", "📋 履歷審核", "📊 表單管理"]
     if user['role'] == 'admin': tabs.append("⚙️ 設定")
     current_tab = st.tabs(tabs)
@@ -505,9 +614,19 @@ def admin_page():
                     succ, msg = sys.create_user(user['email'], c_email, c_name, "candidate", type_code)
                     if succ:
                         link = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
-                        body = f"請登入填寫履歷：{link}\n帳號：{c_email}\n密碼：{c_email}"
-                        send_email(c_email, "面試邀請", body)
-                        st.success(f"已發送給 {c_name}")
+                        plain = f"親愛的 {c_name}，\n\n感謝您對聯成電腦的關注！\n請點以下連結登入填寫履歷：\n{link}\n帳號：{c_email}\n密碼：{c_email}\n\n聯成電腦 人資部"
+                        html = f"""<html><body><div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;padding:24px">
+<img src="{LOGO_URL}" style="height:56px;margin-bottom:20px"/>
+<h2 style="color:#1F3864;margin-bottom:8px">面試邀請通知</h2>
+<p>親愛的 <strong>{c_name}</strong>，</p>
+<p>感謝您對聯成電腦的關注！誠摯邀請您填寫履歷表，讓我們進一步認識您。</p>
+<p style="margin:24px 0"><a href="{link}" style="background:#1F3864;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-size:15px">立即填寫履歷</a></p>
+<p style="color:#555;font-size:13px">登入帳號：{c_email}<br>預設密碼：{c_email}</p>
+<hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+<p style="color:#999;font-size:12px">此信由聯成電腦人才招募系統自動發送，請勿回覆。</p>
+</div></body></html>"""
+                        send_email(c_email, "【聯成電腦】面試邀請", plain, html_body=html)
+                        st.success(f"已發送邀請給 {c_name}")
                     else: st.error(msg)
         
         if user['role'] == 'admin':
@@ -543,7 +662,15 @@ def admin_page():
                     with st.expander(f"{status_badge} {r_badge} {row['name_cn']} ({row['email']})"):
                         
                         pdf_data = generate_pdf(row.to_dict())
-                        st.download_button("📥 下載完整 PDF", pdf_data, f"{row['name_cn']}_履歷.pdf", "application/pdf", key=f"dl_pdf_{row['email']}")
+                        btn_c1, btn_c2 = st.columns(2)
+                        btn_c1.download_button("📥 下載完整 PDF", pdf_data, f"{row['name_cn']}_履歷.pdf", "application/pdf", key=f"dl_pdf_{row['email']}")
+                        if btn_c2.button("🤖 AI 履歷分析", key=f"ai_{row['email']}"):
+                            with st.spinner("Claude AI 分析中..."):
+                                _analysis, _err = _ai_analyze_resume(row.to_dict())
+                            if _analysis:
+                                st.info(_analysis)
+                            else:
+                                st.warning(f"AI 分析未啟用：{_err}")
                         st.divider()
 
                         st.markdown("#### 📄 履歷內容 (唯讀)")
@@ -774,7 +901,17 @@ def candidate_page():
     user = st.session_state.user
     render_sidebar(user)
     st.header(f"📝 履歷填寫")
-    
+
+    # B1: 步驟進度條
+    _steps = ["① 基本資料", "② 學歷", "③ 工作經歷", "④ 其他資訊", "⑤ 確認送出"]
+    st.markdown("".join(
+        f'<span style="display:inline-block;padding:5px 14px;margin:0 2px 8px;'
+        f'background:{"#1F3864" if i==0 else "#D9E8F5"};'
+        f'color:{"white" if i==0 else "#1F3864"};'
+        f'border-radius:20px;font-size:13px;font-weight:{"700" if i==0 else "400"}">{s}</span>'
+        for i, s in enumerate(_steps)
+    ) + "<br>", unsafe_allow_html=True)
+
     df = sys.get_df("resumes")
     if df.empty: st.error("DB Error"); return
     my_df = df[df['email'].astype(str).str.strip().str.lower() == str(user['email']).strip().lower()]
@@ -803,15 +940,15 @@ def candidate_page():
         
         # 基本資料
         with st.container(border=True):
-            st.caption("基本資料")
+            st.caption("基本資料　　:red[* 為必填欄位]")
             c1, c2, c3, c4 = st.columns(4)
-            n_cn = c1.text_input("中文姓名", value=my_resume['name_cn'], key='name_cn')
+            n_cn = c1.text_input("中文姓名 *", value=my_resume['name_cn'], key='name_cn')
             n_en = c2.text_input("英文姓名", value=my_resume['name_en'], key='name_en')
             c3.text_input("身高(cm)", value=my_resume.get('height',''), key='height')
             c4.text_input("體重(kg)", value=my_resume.get('weight',''), key='weight')
             
             c5, c6, c7 = st.columns([2, 1, 1])
-            phone = c5.text_input("手機", value=my_resume['phone'], key='phone')
+            phone = c5.text_input("手機 *", value=my_resume['phone'], key='phone')
             c6.text_input("市話 (H)", value=my_resume.get('home_phone',''), key='home_phone')
             
             m_val = my_resume.get('marital_status', '未婚')
@@ -821,7 +958,7 @@ def candidate_page():
             try: dval = pd.to_datetime(my_resume['dob']) if my_resume['dob'] else date(1995,1,1)
             except: dval = date(1995,1,1)
             dob = c1.date_input("生日", value=dval, min_value=date(1900, 1, 1), key='dob')
-            addr = st.text_input("通訊地址", value=my_resume['address'], key='address')
+            addr = st.text_input("通訊地址 *", value=my_resume['address'], key='address')
             
             c8, c9 = st.columns(2)
             c8.text_input("緊急聯絡人", value=my_resume.get('emergency_contact',''), key='emergency_contact')
@@ -840,8 +977,10 @@ def candidate_page():
                 st.session_state[f'edu_{i}_end'] = c_d2.text_input(f"畢/肄業年月 (YYYY/MM) #{i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in')
 
                 rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
-                st.session_state[f'edu_{i}_school'] = rc1.text_input(f"學校 {i}", value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
-                st.session_state[f'edu_{i}_major'] = rc2.text_input(f"科系 {i}", value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
+                _sch_lbl = f"學校 {i} *" if i == 1 else f"學校 {i}"
+                _maj_lbl = f"科系 {i} *" if i == 1 else f"科系 {i}"
+                st.session_state[f'edu_{i}_school'] = rc1.text_input(_sch_lbl, value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
+                st.session_state[f'edu_{i}_major'] = rc2.text_input(_maj_lbl, value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
                 
                 d_val = my_resume.get(f'edu_{i}_degree', '學士')
                 d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
