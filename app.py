@@ -281,6 +281,8 @@ def send_email(to_email, subject, body, html_body=None):
     try:
         sender_email = _secret("EMAIL_SENDER", "email", "sender_email")
         sender_password = _secret("EMAIL_PASSWORD", "email", "sender_password")
+        if not sender_email or not sender_password:
+            return False, "未設定 EMAIL_SENDER / EMAIL_PASSWORD 環境變數"
         server = smtplib.SMTP("smtp.gmail.com", 587); server.starttls()
         server.login(sender_email, sender_password)
         if html_body:
@@ -292,9 +294,9 @@ def send_email(to_email, subject, body, html_body=None):
             msg = MIMEText(body, 'plain', 'utf-8')
             msg['Subject'] = subject; msg['From'] = sender_email; msg['To'] = to_email
         server.send_message(msg); server.quit()
-        return True
-    except:
-        return False
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 # --- PDF Generation ---
 def generate_pdf(data):
@@ -625,8 +627,11 @@ def admin_page():
 <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
 <p style="color:#999;font-size:12px">此信由聯成電腦人才招募系統自動發送，請勿回覆。</p>
 </div></body></html>"""
-                        send_email(c_email, "【聯成電腦】面試邀請", plain, html_body=html)
-                        st.success(f"已發送邀請給 {c_name}")
+                        _ok, _err = send_email(c_email, "【聯成電腦】面試邀請", plain, html_body=html)
+                        if _ok:
+                            st.success(f"✅ 帳號已建立，邀請信已發送給 {c_name}")
+                        else:
+                            st.warning(f"⚠️ 帳號已建立，但 Email 發送失敗：{_err}")
                     else: st.error(msg)
         
         if user['role'] == 'admin':
@@ -778,8 +783,12 @@ def admin_page():
 請準時出席，若有變動請提前聯繫。
 聯成電腦 人資部
                                     """
-                                    send_email(row['email'], "【聯成電腦】面試通知", body)
-                                    st.success("已核准並發送通知信！"); time.sleep(2); st.rerun()
+                                    _ok, _err = send_email(row['email'], "【聯成電腦】面試通知", body)
+                                    if _ok:
+                                        st.success("已核准並發送通知信！")
+                                    else:
+                                        st.warning(f"已核准，但通知信發送失敗：{_err}")
+                                    time.sleep(2); st.rerun()
 
                             if c_no.form_submit_button("↩️ 退件 (通知修改)"):
                                 if not hr_comment:
@@ -787,8 +796,12 @@ def admin_page():
                                 else:
                                     details = {'hr_comment': hr_comment}
                                     sys.hr_update_status(row['email'], "Returned", details)
-                                    send_email(row['email'], "【聯成電腦】履歷需修改", f"您的履歷被退回。\n原因：{hr_comment}\n請登入修改後重送。")
-                                    st.warning("已退件通知"); time.sleep(2); st.rerun()
+                                    _ok2, _err2 = send_email(row['email'], "【聯成電腦】履歷需修改", f"您的履歷被退回。\n原因：{hr_comment}\n請登入修改後重送。")
+                                    if _ok2:
+                                        st.warning("已退件通知")
+                                    else:
+                                        st.warning(f"已退件，但通知信發送失敗：{_err2}")
+                                    time.sleep(2); st.rerun()
 
             else: st.info("無待審履歷")
 
@@ -871,7 +884,7 @@ def admin_page():
                                             f"系統連結：{app_url}\n"
                                             f"帳號：{cand_email}\n密碼：{cand_email}\n\n"
                                             f"如有任何問題，歡迎聯繫人資部。\n聯成電腦 人資部")
-                                    ok = send_email(cand_email, "【聯成電腦】提醒您完成履歷填寫", body)
+                                    ok, _ = send_email(cand_email, "【聯成電腦】提醒您完成履歷填寫", body)
                                     if ok: st.toast(f"已發送催促通知給 {cand_name}", icon="✅")
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
                             elif raw_st == 'Returned':
@@ -883,7 +896,7 @@ def admin_page():
                                             f"系統連結：{app_url}\n"
                                             f"帳號：{cand_email}\n\n"
                                             f"請盡快完成修改，謝謝。\n聯成電腦 人資部")
-                                    ok = send_email(cand_email, "【聯成電腦】請修改履歷後重新送出", body)
+                                    ok, _ = send_email(cand_email, "【聯成電腦】請修改履歷後重新送出", body)
                                     if ok: st.toast(f"已發送催促通知給 {cand_name}", icon="✅")
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
                             else:
