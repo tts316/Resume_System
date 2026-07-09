@@ -31,7 +31,6 @@ html,body,[class*="css"],.stMarkdown,.stTextInput input,.stSelectbox select{
 .stButton>button[kind="primary"]{
   background:#1F3864!important;border-color:#1F3864!important;color:#fff!important}
 .stButton>button[kind="primary"]:hover{background:#162a4a!important}
-.stMetric{border:1px solid #e0e8f5;border-radius:8px;padding:12px;background:#f8faff}
 @media(max-width:768px){
   [data-testid="column"]{min-width:100%!important;flex:0 0 100%!important}
   .stTextInput input,.stSelectbox>div[data-baseweb]{padding:10px 12px!important;font-size:16px!important}
@@ -567,44 +566,27 @@ def render_sidebar(user):
 
 # --- Pages ---
 def login_page():
-    st.markdown("""<style>
-    .login-wrap{max-width:440px;margin:40px auto;padding:36px 40px;
-      background:white;border-radius:14px;box-shadow:0 4px 24px rgba(31,56,100,.13)}
-    .login-wrap h3{color:#1F3864;margin-bottom:4px}
-    </style>""", unsafe_allow_html=True)
+    # 左側欄：LOGO（左右分割版面）
+    with st.sidebar:
+        st.image(_logo_src(), use_container_width=True)
+        st.divider()
+    # 右側主區塊：登入表單
     _, col, _ = st.columns([1, 2, 1])
     with col:
-        st.image(_logo_src(), use_container_width=True)
-        st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-        st.markdown("### 人才招募系統登入")
-        email = st.text_input("📧 Email 帳號", placeholder="your@email.com")
-        pwd = st.text_input("🔒 密碼", type="password", placeholder="預設密碼為您的 Email")
-        if st.button("登入", type="primary", use_container_width=True):
-            user = sys.verify_login(email, pwd)
-            if user: st.session_state.user = user; st.rerun()
-            else: st.error("帳號或密碼錯誤，預設密碼為 Email 帳號")
+        st.markdown("### 📝 人才招募系統登入")
+        with st.container(border=True):
+            email = st.text_input("📧 Email 帳號", placeholder="your@email.com")
+            pwd = st.text_input("🔒 密碼", type="password", placeholder="預設密碼為您的 Email")
+            if st.button("登入", type="primary", use_container_width=True):
+                user = sys.verify_login(email, pwd)
+                if user: st.session_state.user = user; st.rerun()
+                else: st.error("帳號或密碼錯誤，預設密碼為 Email 帳號")
         st.caption("如有問題請聯繫人資部 ◆ © 聯成電腦")
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def admin_page():
     user = st.session_state.user
     render_sidebar(user)
     st.header(f"👨‍💼 管理後台")
-
-    # C1: 狀態總覽 Dashboard
-    try:
-        _df_dash = sys.get_df("resumes")
-        if not _df_dash.empty:
-            _submitted = int((_df_dash['status'] == 'Submitted').sum())
-            _approved  = int((_df_dash['status'] == 'Approved').sum())
-            _returned  = int((_df_dash['status'] == 'Returned').sum())
-            _total     = len(_df_dash)
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("⏳ 待審履歷", _submitted)
-            mc2.metric("✅ 已核可", _approved)
-            mc3.metric("↩️ 已退件", _returned)
-            mc4.metric("📋 總邀請數", _total)
-    except: pass
 
     tabs = ["📧 發送邀請", "📋 履歷審核", "📊 表單管理"]
     if user['role'] == 'admin': tabs.append("⚙️ 設定")
