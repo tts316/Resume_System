@@ -863,7 +863,7 @@ def admin_page():
                             h.markdown(f"**{t}**")
                         st.divider()
 
-                        for _, fr in grp.iterrows():
+                        for _row_idx, fr in grp.iterrows():
                             raw_st  = str(fr.get('status', 'New'))
                             lbl, badge = STATUS_MAP.get(raw_st, (raw_st, "❓"))
                             sent_date = fr['created_at'].strftime('%Y/%m/%d') if pd.notna(fr['created_at']) else '—'
@@ -876,7 +876,7 @@ def admin_page():
                             rc[2].write(str(fr.get('interview_dept', '—')))
                             rc[3].write(f"{badge} {lbl}")
 
-                            btn_key = f"resend_{cand_email}"
+                            btn_key = f"resend_{cand_email}_{_row_idx}"
                             if raw_st in ('New', 'Draft'):
                                 if rc[4].button("📧 催促填寫", key=btn_key):
                                     body = (f"{cand_name} 您好，\n\n"
