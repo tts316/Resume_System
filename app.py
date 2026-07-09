@@ -46,7 +46,7 @@ SENDER_EMAIL = ""
 SENDER_PASSWORD = ""   
 
 # Logo URL
-LOGO_URL = "https://www.lccnet.com.tw/img/logo.png"
+LOGO_URL = "https://www.lccnet.com.tw/lccnet/img/nav-logo.png"
 
 # 分公司區域資料
 BRANCH_DATA = {
