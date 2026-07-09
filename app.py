@@ -138,7 +138,8 @@ class ResumeDB:
             user = df[df['email'].astype(str).str.strip().str.lower() == email_clean]
             if not user.empty:
                 row = user.iloc[0]
-                if str(row['password']) == str(password):
+                # 防呆：帳號(上方已 strip)與密碼兩邊都去空格，避免多打空白造成登入失敗
+                if str(row['password']).strip() == str(password).strip():
                     return {"email": row['email'], "name": row['name'], "role": row['role'], "creator": row.get('creator_email', '')}
             return None
         except: return None
