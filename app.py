@@ -537,15 +537,22 @@ def generate_pdf(data):
     return buffer
 
 # --- UI Components ---
+def _logo_src():
+    """取得 logo 來源：優先讀 DB(system_settings.logo)，正確處理已含 data: 前綴的值，失敗才 fallback 到 LOGO_URL。"""
+    try:
+        raw = sys.get_logo()
+        lg = str(raw).strip() if raw else ""
+        if lg.startswith("http") or lg.startswith("data:"):
+            return lg
+        if len(lg) > 10:
+            return f"data:image/png;base64,{lg}"
+    except Exception:
+        pass
+    return LOGO_URL
+
 def render_sidebar(user):
     with st.sidebar:
-        try:
-            raw_logo = sys.get_logo(); logo = str(raw_logo).strip() if raw_logo else None
-            if logo and len(logo)>10:
-                if logo.startswith("http"): st.image(logo, use_container_width=True)
-                else: st.image(f"data:image/png;base64,{logo}", use_container_width=True)
-            else: st.image(LOGO_URL, use_container_width=True)
-        except: st.image(LOGO_URL, use_container_width=True)
+        st.image(_logo_src(), use_container_width=True)
         st.divider()
         role_map = {"admin": "人資主管", "pm": "人資 PM", "candidate": "面試者"}
         st.write(f"👋 **{user['name']}**"); st.caption(f"身分: {role_map.get(user['role'], 'User')}")
@@ -567,7 +574,7 @@ def login_page():
     </style>""", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 2, 1])
     with col:
-        st.image(LOGO_URL, use_container_width=True)
+        st.image(_logo_src(), use_container_width=True)
         st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
         st.markdown("### 人才招募系統登入")
         email = st.text_input("📧 Email 帳號", placeholder="your@email.com")
