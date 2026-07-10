@@ -757,13 +757,17 @@ def login_page():
     _, col, _ = st.columns([1, 2, 1])
     with col:
         st.markdown("### 📝 人才招募系統登入")
-        with st.container(border=True):
+        # 用 st.form：欄位按 Enter 也能送出登入(不再「按 Enter 沒反應也沒訊息」)
+        with st.form("login_form"):
             email = st.text_input("📧 Email 帳號", placeholder="your@email.com")
             pwd = st.text_input("🔒 密碼", type="password", placeholder="預設密碼為您的 Email")
-            if st.button("登入", type="primary", use_container_width=True):
-                user = sys.verify_login(email, pwd)
-                if user: st.session_state.user = user; st.rerun()
-                else: st.error("帳號或密碼錯誤，預設密碼為 Email 帳號")
+            submitted = st.form_submit_button("登入", type="primary", use_container_width=True)
+        if submitted:
+            user = sys.verify_login(email, pwd)
+            if user:
+                st.session_state.user = user; st.rerun()
+            else:
+                st.error("帳號或密碼錯誤，預設密碼為 Email 帳號")
         st.caption("如有問題請聯繫人資部 ◆ © 聯成電腦")
 
 def admin_page():
