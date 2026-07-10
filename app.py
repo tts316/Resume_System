@@ -153,8 +153,14 @@ class ResumeDB:
             if not df.empty and email in df['email'].astype(str).values: return False, "Email 已存在"
             self.ws_users.append_row([email, email, name, role, creator_email, str(date.today())])
             if role == "candidate":
-                # 補足 95 欄 (確保 index 足夠)
-                row_data = [email, "New", name] + [""] * 48 + [r_type] + [""] * 45
+                # 依真實表頭「按欄名」放值，避免硬編碼位置放錯欄
+                # (舊 bug：r_type 被放到 index 51=exp_4_co，而非 resume_type@61)
+                headers = [str(h).strip().lower() for h in self.ws_resumes.row_values(1)]
+                row_data = [""] * len(headers)
+                for col, val in [("email", email), ("status", "New"),
+                                 ("name_cn", name), ("resume_type", r_type)]:
+                    if col in headers:
+                        row_data[headers.index(col)] = val
                 self.ws_resumes.append_row(row_data)
             return True, "建立成功"
         except Exception as e: return False, str(e)
