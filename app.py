@@ -76,6 +76,130 @@ def _gcp_creds_dict():
         return json.loads(raw)
     return dict(st.secrets["gcp_service_account"])
 
+# --- PG 雙後端轉接層（DB_BACKEND=postgres 才啟用；以 PG 資料表模擬 gspread worksheet 介面）---
+# 依搬遷 Playbook §3：不重寫商業邏輯，用轉接層讓現有讀寫函式原封不動。
+# 樞紐是每表的 _rn(BIGSERIAL)：Sheets 有天然列序、PG 沒有 → 全部 ORDER BY _rn。
+# 機密一律純讀 os.environ（Playbook 踩雷#5：勿用會 fallback st.secrets 的 helper）。
+try:
+    import psycopg2 as _psycopg2
+    _PSYCOPG2_OK = True
+except ImportError:
+    _PSYCOPG2_OK = False
+
+def _pg_conn_kwargs():
+    user = os.environ.get("PG_USER", "resume_app")
+    password = os.environ.get("PG_PASSWORD", "")
+    dbname = os.environ.get("PG_DB", "resume")
+    conn_name = os.environ.get("PG_CONNECTION_NAME") or os.environ.get("INSTANCE_CONNECTION_NAME")
+    host = os.environ.get("PG_HOST")
+    port = int(os.environ.get("PG_PORT", "5432"))
+    if host:            # 本機：Cloud SQL Auth Proxy(TCP)
+        return dict(host=host, port=port, dbname=dbname, user=user, password=password)
+    if conn_name:       # Cloud Run：unix socket /cloudsql/<connection_name>
+        return dict(host=f"/cloudsql/{conn_name}", dbname=dbname, user=user, password=password)
+    return dict(host="127.0.0.1", port=port, dbname=dbname, user=user, password=password)
+
+class _Cell:
+    def __init__(self, row, col, value=""):
+        self.row = row; self.col = col; self.value = value
+
+class PGBackend:
+    """psycopg2 連線；autocommit（每句即時寫入，語意同 Sheets 逐格寫）。斷線自動重連一次。"""
+    def __init__(self):
+        if not _PSYCOPG2_OK:
+            raise RuntimeError("DB_BACKEND=postgres 但未安裝 psycopg2-binary")
+        self._connect()
+        for t in ("users", "resumes", "system_settings"):   # _rn 冪等自癒(schema 已建，通常 no-op)
+            try: self.exec(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS _rn BIGSERIAL')
+            except Exception: pass
+
+    def _connect(self):
+        self.conn = _psycopg2.connect(**_pg_conn_kwargs())
+        self.conn.autocommit = True
+
+    def exec(self, sql, params=(), fetch=None):
+        for attempt in (1, 2):
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    if fetch == "all": return cur.fetchall()
+                    if fetch == "one": return cur.fetchone()
+                    return None
+            except _psycopg2.OperationalError:
+                if attempt == 2: raise
+                self._connect()   # 斷線重連再試一次
+
+class PGWorksheet:
+    """模擬單一 worksheet：列1=表頭(不含 _rn)、資料列依 _rn 排序對映列2起。"""
+    def __init__(self, backend, table):
+        self.b = backend; self.t = table
+        rows = self.b.exec(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=%s AND column_name <> '_rn' "
+            "ORDER BY ordinal_position", (table,), fetch="all")
+        self.cols = [r[0] for r in rows]
+
+    def _q(self, name): return '"' + str(name).replace('"', '""') + '"'
+
+    def _rn_for_row(self, row):   # row 1-based，1=表頭；資料列 row>=2 → ORDER BY _rn 第(row-2)筆
+        r = self.b.exec(f'SELECT _rn FROM {self._q(self.t)} ORDER BY _rn OFFSET %s LIMIT 1',
+                        (row - 2,), fetch="one")
+        return r[0] if r else None
+
+    def get_all_values(self):
+        collist = ", ".join(self._q(c) for c in self.cols)
+        rows = self.b.exec(f'SELECT {collist} FROM {self._q(self.t)} ORDER BY _rn', fetch="all")
+        out = [list(self.cols)]
+        for row in rows:
+            out.append(["" if v is None else str(v) for v in row])
+        return out
+
+    def row_values(self, rownum):
+        if rownum == 1: return list(self.cols)
+        collist = ", ".join(self._q(c) for c in self.cols)
+        r = self.b.exec(f'SELECT {collist} FROM {self._q(self.t)} ORDER BY _rn OFFSET %s LIMIT 1',
+                        (rownum - 2,), fetch="one")
+        return ["" if v is None else str(v) for v in r] if r else []
+
+    def find(self, query, in_column=1):
+        col = self.cols[in_column - 1]
+        r = self.b.exec(
+            f'SELECT _rn FROM {self._q(self.t)} WHERE {self._q(col)} = %s ORDER BY _rn LIMIT 1',
+            (str(query),), fetch="one")
+        if not r: return None
+        p = self.b.exec(f'SELECT count(*) FROM {self._q(self.t)} WHERE _rn <= %s',
+                        (r[0],), fetch="one")[0]
+        return _Cell(row=p + 1, col=in_column, value=str(query))
+
+    def cell(self, row, col):
+        rn = self._rn_for_row(row); val = ""
+        if rn is not None:
+            r = self.b.exec(f'SELECT {self._q(self.cols[col-1])} FROM {self._q(self.t)} WHERE _rn=%s',
+                            (rn,), fetch="one")
+            if r and r[0] is not None: val = str(r[0])
+        return _Cell(row=row, col=col, value=val)
+
+    def update_cell(self, row, col, value):
+        rn = self._rn_for_row(row)
+        if rn is None: return
+        self.b.exec(f'UPDATE {self._q(self.t)} SET {self._q(self.cols[col-1])}=%s WHERE _rn=%s',
+                    ("" if value is None else str(value), rn))
+
+    def append_row(self, values, **kwargs):
+        vals = list(values)[:len(self.cols)]
+        vals += [""] * (len(self.cols) - len(vals))
+        vals = ["" if v is None else str(v) for v in vals]
+        collist = ", ".join(self._q(c) for c in self.cols)
+        ph = ", ".join(["%s"] * len(self.cols))
+        self.b.exec(f'INSERT INTO {self._q(self.t)} ({collist}) VALUES ({ph})', tuple(vals))
+
+class PGSpreadsheet:
+    """模擬整份試算表：worksheet(title) 回 PGWorksheet。"""
+    def __init__(self):
+        self.backend = PGBackend()
+    def worksheet(self, title):
+        return PGWorksheet(self.backend, title)
+
 # --- 2. 資料庫核心 ---
 class ResumeDB:
     def __init__(self):
@@ -83,12 +207,16 @@ class ResumeDB:
 
     def connect(self):
         try:
-            scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-            creds_dict = _gcp_creds_dict()
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-            self.client = gspread.authorize(creds)
-            sheet_url = _secret("SPREADSHEET_URL", "sheet_config", "spreadsheet_url")
-            self.sh = self.client.open_by_url(sheet_url)
+            if os.environ.get("DB_BACKEND", "").strip().lower() == "postgres":
+                self.client = None
+                self.sh = PGSpreadsheet()          # 走 PG，介面同 gspread
+            else:
+                scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+                creds_dict = _gcp_creds_dict()
+                creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+                self.client = gspread.authorize(creds)
+                sheet_url = _secret("SPREADSHEET_URL", "sheet_config", "spreadsheet_url")
+                self.sh = self.client.open_by_url(sheet_url)
             self.ws_users = self.sh.worksheet("users")
             self.ws_resumes = self.sh.worksheet("resumes")
             self.ws_settings = self.sh.worksheet("system_settings")
