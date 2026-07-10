@@ -1033,6 +1033,22 @@ def admin_page():
                 merged2['ym'] = merged2['created_at'].dt.strftime('%Y-%m').fillna('未知')
                 merged2 = merged2.sort_values('created_at', ascending=False)
 
+                # ── 起訖月份查詢（預設近 2 個月，避免過多月份塞滿畫面）──────────
+                def _mlabel(m):
+                    try:    return datetime.strptime(m, '%Y-%m').strftime('%Y 年 %m 月')
+                    except: return m
+                _months = sorted([m for m in merged2['ym'].unique() if m and m != '未知'], reverse=True)
+                if _months:
+                    _si = 1 if len(_months) > 1 else 0   # 預設起始=次新月 → 近 2 個月
+                    fcs, fce = st.columns(2)
+                    _mstart = fcs.selectbox("起始月份", _months, index=_si, format_func=_mlabel, key="fm_start")
+                    _mend   = fce.selectbox("結束月份", _months, index=0,   format_func=_mlabel, key="fm_end")
+                    _lo, _hi = sorted([_mstart, _mend])
+                    merged2 = merged2[(merged2['ym'] >= _lo) & (merged2['ym'] <= _hi)]
+                    st.caption(f"顯示 {_mlabel(_lo)} ～ {_mlabel(_hi)}，共 {len(merged2)} 筆")
+                    if merged2.empty:
+                        st.info("此區間無資料")
+
                 app_url = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
 
                 for ym, grp in merged2.groupby('ym', sort=False):
