@@ -193,6 +193,14 @@ class PGWorksheet:
         ph = ", ".join(["%s"] * len(self.cols))
         self.b.exec(f'INSERT INTO {self._q(self.t)} ({collist}) VALUES ({ph})', tuple(vals))
 
+    def delete_rows(self, start, end=None):
+        end = start if end is None else end
+        rns = [rn for row in range(start, end + 1)
+               if (rn := self._rn_for_row(row)) is not None]
+        if rns:
+            ph = ", ".join(["%s"] * len(rns))
+            self.b.exec(f'DELETE FROM {self._q(self.t)} WHERE _rn IN ({ph})', tuple(rns))
+
 class PGSpreadsheet:
     """模擬整份試算表：worksheet(title) 回 PGWorksheet。"""
     def __init__(self):
@@ -348,6 +356,25 @@ class ResumeDB:
                 return True, "OK"
             return False, "Fail"
         except Exception as e: return False, str(e)
+
+    def delete_user_account(self, email):
+        """刪除求職者帳號：resumes + users 兩表對應列。防護：已審查核可(Approved)不可刪。回傳 (bool, msg)。"""
+        try:
+            email = str(email).strip()
+            cell_r = self.ws_resumes.find(email, in_column=1)
+            if cell_r:
+                headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
+                if 'status' in headers:
+                    st_val = self.ws_resumes.cell(cell_r.row, headers.index('status') + 1).value
+                    if str(st_val).strip() == 'Approved':
+                        return False, "已審查核可，不可刪除"
+                self.ws_resumes.delete_rows(cell_r.row)
+            cell_u = self.ws_users.find(email, in_column=1)
+            if cell_u:
+                self.ws_users.delete_rows(cell_u.row)
+            return True, "OK"
+        except Exception as e:
+            return False, str(e)
 
     def get_logo(self):
         try:
@@ -982,8 +1009,8 @@ def admin_page():
                     is_first = (ym == merged2['ym'].iloc[0])
                     with st.expander(f"📅 {mlabel}（共 {len(grp)} 筆）", expanded=is_first):
                         # 表頭
-                        hc = st.columns([2, 2, 2, 2, 2])
-                        for h, t in zip(hc, ["發送日期", "求職者姓名", "面試單位", "狀態", "操作"]):
+                        hc = st.columns([0.8, 2, 2, 2, 2, 2])
+                        for h, t in zip(hc, ["選取", "發送日期", "求職者姓名", "面試單位", "狀態", "操作"]):
                             h.markdown(f"**{t}**")
                         st.divider()
 
@@ -994,15 +1021,20 @@ def admin_page():
                             cand_email = str(fr['email']).strip()
                             cand_name  = str(fr.get('name_cn', fr['name'])).strip()
 
-                            rc = st.columns([2, 2, 2, 2, 2])
-                            rc[0].write(sent_date)
-                            rc[1].write(cand_name)
-                            rc[2].write(str(fr.get('interview_dept', '—')))
-                            rc[3].write(f"{badge} {lbl}")
+                            rc = st.columns([0.8, 2, 2, 2, 2, 2])
+                            # 勾選：僅「尚未審查核可」(status != Approved) 可刪
+                            if raw_st != 'Approved':
+                                rc[0].checkbox("選取", key=f"del_chk_{cand_email}", label_visibility="collapsed")
+                            else:
+                                rc[0].write("🔒")
+                            rc[1].write(sent_date)
+                            rc[2].write(cand_name)
+                            rc[3].write(str(fr.get('interview_dept', '—')))
+                            rc[4].write(f"{badge} {lbl}")
 
                             btn_key = f"resend_{cand_email}_{_row_idx}"
                             if raw_st in ('New', 'Draft'):
-                                if rc[4].button("📧 催促填寫", key=btn_key):
+                                if rc[5].button("📧 催促填寫", key=btn_key):
                                     body = (f"{cand_name} 您好，\n\n"
                                             f"提醒您尚未完成履歷填寫，請盡快登入系統填寫並送出。\n"
                                             f"系統連結：{app_url}\n"
@@ -1013,7 +1045,7 @@ def admin_page():
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
                             elif raw_st == 'Returned':
                                 reason = str(fr.get('hr_comment', '')).strip()
-                                if rc[4].button("📧 催促修改", key=btn_key):
+                                if rc[5].button("📧 催促修改", key=btn_key):
                                     body = (f"{cand_name} 您好，\n\n"
                                             f"您的履歷已被退回，請登入系統依照退件原因修改後重新送出。\n"
                                             f"退件原因：{reason or '請參閱系統說明'}\n\n"
@@ -1024,7 +1056,49 @@ def admin_page():
                                     if ok: st.toast(f"已發送催促通知給 {cand_name}", icon="✅")
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
                             else:
-                                rc[4].write("—")
+                                rc[5].write("—")
+
+                # ── 刪除求職者帳號（勾選 → 確認 → 摘要）──────────────
+                st.divider()
+                st.caption("🗑️ 勾選上方求職者後可刪除其帳號與履歷資料（僅限**尚未審查核可**者；🔒 表示已核可、不可刪）")
+                if st.button("🗑️ 刪除勾選的帳號"):
+                    _deletable = merged2[merged2['status'] != 'Approved']
+                    _sel = [(str(r['email']).strip(), str(r.get('name_cn') or r['name']).strip())
+                            for _, r in _deletable.iterrows()
+                            if st.session_state.get(f"del_chk_{str(r['email']).strip()}")]
+                    if not _sel:
+                        st.warning("尚未勾選任何求職者")
+                    else:
+                        st.session_state['pending_del'] = _sel
+                        st.rerun()
+
+                if st.session_state.get('pending_del'):
+                    _sel = st.session_state['pending_del']
+                    st.warning(f"⚠️ 確定刪除以下 {len(_sel)} 個求職者的帳號與履歷資料？**此動作無法復原。**")
+                    for _em, _nm in _sel:
+                        st.write(f"- {_nm}（{_em}）")
+                    _c1, _c2, _ = st.columns([1, 1, 3])
+                    if _c1.button("✅ 確認刪除", type="primary"):
+                        _results = [(_nm, _em) + sys.delete_user_account(_em) for _em, _nm in _sel]
+                        st.session_state['del_summary'] = _results
+                        del st.session_state['pending_del']
+                        st.rerun()
+                    if _c2.button("取消"):
+                        del st.session_state['pending_del']
+                        st.rerun()
+
+                if st.session_state.get('del_summary'):
+                    _results = st.session_state['del_summary']
+                    _ok = sum(1 for r in _results if r[2])
+                    _fail = len(_results) - _ok
+                    st.success(f"刪除完成：成功 {_ok} 筆" + (f"、失敗 {_fail} 筆" if _fail else ""))
+                    for _nm, _em, _okf, _msg in _results:
+                        st.write(f"✅ {_nm}（{_em}）已刪除" if _okf else f"❌ {_nm}（{_em}）失敗：{_msg}")
+                    if st.button("關閉摘要"):
+                        for _nm, _em, _okf, _msg in _results:
+                            st.session_state.pop(f"del_chk_{_em}", None)
+                        del st.session_state['del_summary']
+                        st.rerun()
 
     if user['role'] == 'admin':
         with current_tab[3]:
