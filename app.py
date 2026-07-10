@@ -763,11 +763,18 @@ def login_page():
             pwd = st.text_input("🔒 密碼", type="password", placeholder="預設密碼為您的 Email")
             submitted = st.form_submit_button("登入", type="primary", use_container_width=True)
         if submitted:
-            user = sys.verify_login(email, pwd)
-            if user:
-                st.session_state.user = user; st.rerun()
+            _e, _p = str(email).strip(), str(pwd).strip()   # 輸入層再去一次空格(防呆)
+            if not _e or not _p:
+                st.error("請輸入帳號與密碼")
+                st.warning("⚠️ 若你是用瀏覽器「自動填入」：系統有時沒接收到自動帶入的值（收到空白）。"
+                           "請在欄位點一下、隨意補打一個字再刪掉，讓系統讀到值後再按登入。")
             else:
-                st.error("帳號或密碼錯誤，預設密碼為 Email 帳號")
+                user = sys.verify_login(_e, _p)
+                if user:
+                    st.session_state.user = user; st.rerun()
+                else:
+                    st.error(f"帳號或密碼錯誤（收到帳號 {len(_e)} 碼、密碼 {len(_p)} 碼）。"
+                             "若長度正常仍失敗，可能是瀏覽器存了舊密碼。")
         st.caption("如有問題請聯繫人資部 ◆ © 聯成電腦")
 
 def admin_page():
