@@ -201,6 +201,15 @@ class PGWorksheet:
             ph = ", ".join(["%s"] * len(rns))
             self.b.exec(f'DELETE FROM {self._q(self.t)} WHERE _rn IN ({ph})', tuple(rns))
 
+    def update_cells_row(self, row, updates_by_colidx):
+        """一列多欄單條 UPDATE。updates_by_colidx: {1-based colnum: value}。"""
+        rn = self._rn_for_row(row)
+        if rn is None or not updates_by_colidx:
+            return
+        sets = ", ".join(f'{self._q(self.cols[c-1])}=%s' for c in updates_by_colidx)
+        params = ["" if v is None else str(v) for v in updates_by_colidx.values()]
+        self.b.exec(f'UPDATE {self._q(self.t)} SET {sets} WHERE _rn=%s', tuple(params) + (rn,))
+
 class PGSpreadsheet:
     """模擬整份試算表：worksheet(title) 回 PGWorksheet。"""
     def __init__(self):
@@ -309,52 +318,60 @@ class ResumeDB:
             return False, "Fail"
         except Exception as e: return False, str(e)
 
+    def _apply_updates(self, ws, row, headers, updates):
+        """批次更新一列多欄(單次)。PG 走單條 UPDATE；gspread 用 batch_update(單次 API)。
+        取代逐格 update_cell 迴圈，存一次履歷從 ~95 次寫入降為 1 次。"""
+        if not updates:
+            return
+        if isinstance(ws, PGWorksheet):
+            ws.update_cells_row(row, {headers.index(c) + 1: v for c, v in updates.items()})
+        else:
+            import gspread.utils as _gu
+            reqs = [{'range': _gu.rowcol_to_a1(row, headers.index(c) + 1),
+                     'values': [["" if v is None else str(v)]]}
+                    for c, v in updates.items()]
+            ws.batch_update(reqs)
+
     # [關鍵修復]：自動移除 Key 後面的 `_in`，以匹配資料庫欄位
     def save_resume(self, email, data, status="Draft"):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
                 r = cell.row
-                headers = self.ws_resumes.row_values(1)
-                headers = [h.strip().lower() for h in headers]
-                
-                self.ws_resumes.update_cell(r, headers.index('status')+1, status)
-                
+                headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
+                updates = {}
+                if 'status' in headers:
+                    updates['status'] = status
                 for key, val in data.items():
                     clean_key = key.lower()
                     if clean_key.endswith("_in"):
-                        clean_key = clean_key[:-3] # 去掉 _in
-                    
+                        clean_key = clean_key[:-3]  # 去掉 _in
                     if clean_key == 'status':
                         continue
                     if clean_key in headers:
-                        col_idx = headers.index(clean_key) + 1
                         if isinstance(val, (date, datetime)):
                             val = str(val)
-                        self.ws_resumes.update_cell(r, col_idx, val)
+                        updates[clean_key] = val
+                self._apply_updates(self.ws_resumes, r, headers, updates)  # 批次寫入
                 _invalidate_cache()
                 return True, "儲存成功"
             return False, "No Data"
         except Exception as e: return False, str(e)
 
-    # [縮排修復]
     def hr_update_status(self, email, status, details=None):
         try:
             cell = self.ws_resumes.find(email, in_column=1)
             if cell:
                 r = cell.row
-                headers = self.ws_resumes.row_values(1)
-                headers = [h.strip().lower() for h in headers]
-                
+                headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
+                updates = {}
                 if 'status' in headers:
-                    self.ws_resumes.update_cell(r, headers.index('status')+1, status)
-                
+                    updates['status'] = status
                 if details:
                     for k, v in details.items():
                         if k in headers:
-                            col = headers.index(k) + 1
-                            val = str(v) if v else ""
-                            self.ws_resumes.update_cell(r, col, val)
+                            updates[k] = str(v) if v else ""
+                self._apply_updates(self.ws_resumes, r, headers, updates)  # 批次寫入
                 _invalidate_cache()
                 return True, "OK"
             return False, "Fail"
