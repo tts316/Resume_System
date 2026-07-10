@@ -298,6 +298,7 @@ class ResumeDB:
                     if col in headers:
                         row_data[headers.index(col)] = val
                 self.ws_resumes.append_row(row_data)
+            _invalidate_cache()
             return True, "建立成功"
         except Exception as e: return False, str(e)
 
@@ -331,6 +332,7 @@ class ResumeDB:
                         if isinstance(val, (date, datetime)):
                             val = str(val)
                         self.ws_resumes.update_cell(r, col_idx, val)
+                _invalidate_cache()
                 return True, "儲存成功"
             return False, "No Data"
         except Exception as e: return False, str(e)
@@ -353,6 +355,7 @@ class ResumeDB:
                             col = headers.index(k) + 1
                             val = str(v) if v else ""
                             self.ws_resumes.update_cell(r, col, val)
+                _invalidate_cache()
                 return True, "OK"
             return False, "Fail"
         except Exception as e: return False, str(e)
@@ -372,6 +375,7 @@ class ResumeDB:
             cell_u = self.ws_users.find(email, in_column=1)
             if cell_u:
                 self.ws_users.delete_rows(cell_u.row)
+            _invalidate_cache()
             return True, "OK"
         except Exception as e:
             return False, str(e)
@@ -697,6 +701,23 @@ def generate_pdf(data):
     buffer.seek(0)
     return buffer
 
+# --- 效能：DB 讀取快取 + PDF 快取（寫入時自動失效）---
+@st.cache_data(ttl=30, show_spinner=False)
+def load_df(table_name):
+    """快取版讀取(ttl 30s)；任何寫入後由 _invalidate_cache() 清除，確保即時。
+    取代散落各頁的 sys.get_df()，避免每次 Streamlit rerun(每個 widget 互動)重複整表讀取。"""
+    return sys.get_df(table_name)
+
+def _invalidate_cache():
+    try: load_df.clear()
+    except Exception: pass
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_pdf_bytes(row_items):
+    """依整列內容快取 PDF bytes；資料一變動 key 就變、自動重建，
+    避免審核列表每次 rerun 都對每筆履歷重跑 generate_pdf(高 CPU)。"""
+    return generate_pdf(dict(row_items)).getvalue()
+
 # --- UI Components ---
 def _logo_src():
     """取得 logo 來源：優先讀 DB(system_settings.logo)，正確處理已含 data: 前綴的值，失敗才 fallback 到 LOGO_URL。"""
@@ -797,8 +818,8 @@ def admin_page():
 
     with current_tab[1]:
         st.subheader("履歷審核列表")
-        df = sys.get_df("resumes")
-        df_users = sys.get_df("users")
+        df = load_df("resumes")
+        df_users = load_df("users")
         
         if not df.empty and not df_users.empty:
             merged_df = df.merge(df_users[['email', 'creator_email']], on='email', how='left')
@@ -817,7 +838,7 @@ def admin_page():
                     
                     with st.expander(f"{status_badge} {r_badge} {row['name_cn']} ({row['email']})"):
                         
-                        pdf_data = generate_pdf(row.to_dict())
+                        pdf_data = _cached_pdf_bytes(tuple(sorted(row.to_dict().items())))
                         btn_c1, btn_c2 = st.columns(2)
                         btn_c1.download_button("📥 下載完整 PDF", pdf_data, f"{row['name_cn']}_履歷.pdf", "application/pdf", key=f"dl_pdf_{row['email']}")
                         if btn_c2.button("🤖 AI 履歷分析", key=f"ai_{row['email']}"):
@@ -968,8 +989,8 @@ def admin_page():
             "Returned":  ("已退件",    "↩️"),
         }
 
-        df_u2 = sys.get_df("users")
-        df_r2 = sys.get_df("resumes")
+        df_u2 = load_df("users")
+        df_r2 = load_df("resumes")
 
         if df_u2.empty:
             st.info("尚無資料")
@@ -1123,7 +1144,7 @@ def candidate_page():
         for i, s in enumerate(_steps)
     ) + "<br>", unsafe_allow_html=True)
 
-    df = sys.get_df("resumes")
+    df = load_df("resumes")
     if df.empty: st.error("DB Error"); return
     my_df = df[df['email'].astype(str).str.strip().str.lower() == str(user['email']).strip().lower()]
     if my_df.empty: st.error("無履歷資料"); return
