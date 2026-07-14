@@ -57,6 +57,16 @@ BRANCH_DATA = {
     "南二區": ["高雄", "鳳山", "楠梓", "屏東"]
 }
 
+# 到職文件設定：(類別鍵, 顯示名稱, 份數上限)
+DOC_CATEGORIES = [
+    ("id_card", "身分證影本（正反面）", 2),
+    ("edu",     "學歷證明",            3),
+    ("other",   "其他證明文件",        3),
+]
+DOC_CAT_LABEL = {k: lbl for k, lbl, _ in DOC_CATEGORIES}
+ALLOWED_DOC_EXT = ["pdf", "jpg", "jpeg", "doc"]
+MAX_DOC_MB = 5
+
 # --- 機密設定讀取：雲端(Cloud Run)優先讀環境變數，本機/Streamlit Cloud fallback 讀 secrets.toml ---
 def _secret(env_key, *secret_path, default=None):
     val = os.environ.get(env_key)
@@ -112,9 +122,17 @@ class PGBackend:
         for t in ("users", "resumes", "system_settings"):   # _rn 冪等自癒(schema 已建，通常 no-op)
             try: self.exec(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS _rn BIGSERIAL')
             except Exception: pass
-        for c in ("signature", "signed_at"):   # 履歷手寫簽名欄自癒(冪等)
+        for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at"):   # 簽名/到職文件欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
+        try:   # 到職文件表自癒(冪等)：檔案存 bytea，量小、免另建 GCS
+            self.exec('''CREATE TABLE IF NOT EXISTS onboarding_docs (
+                id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL, category TEXT NOT NULL,
+                slot INT NOT NULL DEFAULT 1, filename TEXT NOT NULL DEFAULT '',
+                mime TEXT NOT NULL DEFAULT '', data BYTEA NOT NULL,
+                uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now())''')
+            self.exec('CREATE INDEX IF NOT EXISTS idx_onboarding_email ON onboarding_docs(email)')
+        except Exception: pass
 
     def _connect(self):
         self.conn = _psycopg2.connect(**_pg_conn_kwargs())
@@ -262,7 +280,7 @@ class ResumeDB:
                 "marital_status", "emergency_contact", "emergency_phone", "home_phone",
                 "holiday_shift", "rotate_shift", "family_support_shift", "care_dependent", "financial_burden", "accept_rotation",
                 "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes",
-                "signature", "signed_at"
+                "signature", "signed_at", "docs_enabled", "docs_submitted_at"
             ],
             "system_settings": ["key", "value"]
         }
@@ -376,6 +394,67 @@ class ResumeDB:
             _invalidate_cache()
             return True, "OK"
         except Exception as e: return False, str(e)
+
+    def _update_resume_fields(self, email, updates):
+        """通用：依欄名批次更新 resumes 單列(只寫實際存在的欄)。"""
+        try:
+            cell = self.ws_resumes.find(email, in_column=1)
+            if not cell: return False, "查無資料"
+            headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
+            ups = {k: v for k, v in updates.items() if k in headers}
+            if not ups: return False, "無可寫欄位"
+            self._apply_updates(self.ws_resumes, cell.row, headers, ups)
+            _invalidate_cache()
+            return True, "OK"
+        except Exception as e: return False, str(e)
+
+    def set_docs_enabled(self, email, enabled):
+        return self._update_resume_fields(email, {"docs_enabled": "Y" if enabled else ""})
+
+    def mark_docs_submitted(self, email):
+        return self._update_resume_fields(email, {"docs_submitted_at": datetime.now().strftime('%Y-%m-%d %H:%M')})
+
+    # ── 到職文件（PG bytea；僅 PostgreSQL 後端）─────────────────────
+    def _pg(self):
+        return getattr(self.sh, "backend", None)   # PGSpreadsheet 才有 .backend
+
+    def docs_add(self, email, category, slot, filename, mime, data_bytes):
+        b = self._pg()
+        if b is None: return False, "此功能需 PostgreSQL 後端"
+        try:
+            b.exec('INSERT INTO onboarding_docs (email,category,slot,filename,mime,data) '
+                   'VALUES (%s,%s,%s,%s,%s,%s)',
+                   (email, category, int(slot), filename, mime, data_bytes))
+            return True, "OK"
+        except Exception as e: return False, str(e)
+
+    def docs_list(self, email):
+        b = self._pg()
+        if b is None: return []
+        try:
+            rows = b.exec("SELECT id,category,slot,filename,mime,"
+                          "to_char(uploaded_at,'YYYY-MM-DD HH24:MI') "
+                          "FROM onboarding_docs WHERE email=%s ORDER BY category,slot,id",
+                          (email,), fetch="all") or []
+            return [{"id": r[0], "category": r[1], "slot": r[2], "filename": r[3],
+                     "mime": r[4], "uploaded_at": r[5]} for r in rows]
+        except Exception: return []
+
+    def docs_get(self, doc_id):
+        b = self._pg()
+        if b is None: return None
+        try:
+            r = b.exec('SELECT filename,mime,data FROM onboarding_docs WHERE id=%s', (int(doc_id),), fetch="one")
+            if not r: return None
+            return {"filename": r[0], "mime": r[1], "data": bytes(r[2])}
+        except Exception: return None
+
+    def docs_delete(self, doc_id):
+        b = self._pg()
+        if b is None: return False
+        try:
+            b.exec('DELETE FROM onboarding_docs WHERE id=%s', (int(doc_id),)); return True
+        except Exception: return False
 
     def hr_update_status(self, email, status, details=None):
         try:
@@ -762,6 +841,11 @@ def _invalidate_cache():
     try: load_df.clear()
     except Exception: pass
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_doc(doc_id):
+    """依 doc_id 快取到職文件 bytes(下載用)，避免每次 rerun 重讀 bytea。"""
+    return sys.docs_get(doc_id)
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_pdf_bytes(row_items):
     """依整列內容快取 PDF bytes；資料一變動 key 就變、自動重建，
@@ -832,7 +916,7 @@ def admin_page():
     render_sidebar(user)
     st.header(f"👨‍💼 管理後台")
 
-    tabs = ["📧 發送邀請", "📋 履歷審核", "📊 表單管理"]
+    tabs = ["📧 發送邀請", "📋 履歷審核", "📊 表單管理", "📁 到職文件管理"]
     if user['role'] == 'admin': tabs.append("⚙️ 設定")
     current_tab = st.tabs(tabs)
     
@@ -1064,11 +1148,11 @@ def admin_page():
                 st.info("尚無邀請記錄")
             else:
                 if not df_r2.empty:
-                    r_cols = [c for c in ['email','status','name_cn','interview_dept','resume_type','hr_comment'] if c in df_r2.columns]
+                    r_cols = [c for c in ['email','status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled'] if c in df_r2.columns]
                     merged2 = cands.merge(df_r2[r_cols], on='email', how='left')
                 else:
                     merged2 = cands.copy()
-                    for col in ['status','name_cn','interview_dept','resume_type','hr_comment']:
+                    for col in ['status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled']:
                         merged2[col] = ''
 
                 merged2['status'] = merged2['status'].fillna('New').replace('', 'New')
@@ -1153,6 +1237,10 @@ def admin_page():
                                     ok, _ = send_email(cand_email, "【聯成電腦】請修改履歷後重新送出", body)
                                     if ok: st.toast(f"已發送催促通知給 {cand_name}", icon="✅")
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
+                            elif raw_st == 'Approved':
+                                _den = str(fr.get('docs_enabled', '')).strip().upper() == 'Y'
+                                rc[5].checkbox("開放到職文件", value=_den, key=f"docen_{cand_email}",
+                                               on_change=_toggle_docs_enabled, args=(cand_email,))
                             else:
                                 rc[5].write("—")
 
@@ -1198,8 +1286,11 @@ def admin_page():
                         del st.session_state['del_summary']
                         st.rerun()
 
+    with current_tab[3]:
+        _render_docs_admin(user)
+
     if user['role'] == 'admin':
-        with current_tab[3]:
+        with current_tab[4]:
             up = st.file_uploader("Logo 更新", type=['png','jpg'])
             if up and st.button("更新"):
                 b64 = base64.b64encode(up.getvalue()).decode()
@@ -1218,7 +1309,10 @@ def _render_fill(user, my_resume, status, r_type):
     ) + "<br>", unsafe_allow_html=True)
 
     if status == "Approved":
-        st.balloons(); st.success("🎉 恭喜！您的履歷已審核通過。")
+        if not st.session_state.get('_balloons_shown'):
+            st.session_state['_balloons_shown'] = True
+            st.balloons()
+        st.success("🎉 恭喜！您的履歷已審核通過。")
         with st.expander("查看面試資訊", expanded=True):
             st.write(f"📅 日期: {my_resume.get('interview_date')}")
             st.write(f"⏰ 時間: {my_resume.get('interview_time')}")
@@ -1561,6 +1655,132 @@ def _render_confirm(user, my_resume, status):
         st.session_state['sig_verified'] = False
         st.rerun()
 
+def _render_docs(user, my_resume, status):
+    """求職者：到職文件上傳/查閱（僅 面試通過 且 PM 已開啟 才開放）。"""
+    email = str(user['email']).strip()
+    st.subheader("📎 到職文件上傳 / 查閱")
+    enabled = str(my_resume.get('docs_enabled', '')).strip().upper() == 'Y'
+    if status != "Approved":
+        st.info("履歷經人資審核**通過**後，此功能才會開放。")
+        return
+    if not enabled:
+        st.info("此功能將於人資（PM）為您**開啟**後提供，請稍候或洽詢人資部。")
+        return
+    if sys._pg() is None:
+        st.error("此功能需 PostgreSQL 後端。")
+        return
+
+    st.caption(f"可上傳格式：PDF / JPG / DOC，單檔上限 {MAX_DOC_MB}MB。上傳錯誤可刪除後重傳。")
+    docs = sys.docs_list(email)
+    by_cat = {}
+    for d in docs:
+        by_cat.setdefault(d['category'], []).append(d)
+
+    for cat_key, cat_label, cat_max in DOC_CATEGORIES:
+        existing = by_cat.get(cat_key, [])
+        st.markdown(f"**{cat_label}**（{len(existing)}/{cat_max}）")
+        for d in existing:
+            cc = st.columns([5, 1, 1])
+            cc[0].write(f"📄 {d['filename']}　·　{d['uploaded_at']}")
+            if st.session_state.get(f"want_doc_{d['id']}"):
+                doc = _cached_doc(d['id'])
+                if doc:
+                    cc[1].download_button("下載", doc['data'], d['filename'],
+                                          doc['mime'] or "application/octet-stream", key=f"dl_doc_{d['id']}")
+            elif cc[1].button("調閱", key=f"prep_doc_{d['id']}"):
+                st.session_state[f"want_doc_{d['id']}"] = True; st.rerun()
+            if cc[2].button("刪除", key=f"del_doc_{d['id']}"):
+                sys.docs_delete(d['id']); _cached_doc.clear()
+                st.toast("已刪除", icon="🗑️"); st.rerun()
+        if len(existing) < cat_max:
+            up = st.file_uploader(f"新增{cat_label}", type=ALLOWED_DOC_EXT,
+                                  key=f"up_{cat_key}", label_visibility="collapsed")
+            if up is not None:
+                data = up.getvalue()
+                if len(data) > MAX_DOC_MB * 1024 * 1024:
+                    st.error(f"「{up.name}」超過 {MAX_DOC_MB}MB，請壓縮後再上傳。")
+                elif st.button(f"⬆️ 上傳至「{cat_label}」", key=f"btn_up_{cat_key}"):
+                    slot = max([d['slot'] for d in existing], default=0) + 1
+                    ok, msg = sys.docs_add(email, cat_key, slot, up.name, up.type or "", data)
+                    if ok: st.toast("已上傳", icon="✅"); st.rerun()
+                    else:  st.error(f"上傳失敗：{msg}")
+        st.divider()
+
+    submitted = str(my_resume.get('docs_submitted_at', '')).strip()
+    if submitted:
+        st.success(f"✅ 已於 {submitted} 送出並通知人資。您仍可繼續補傳、下載或刪除文件。")
+    if st.button("🚀 送出（通知人資 PM）", type="primary"):
+        if not docs:
+            st.warning("尚未上傳任何文件，無法送出。")
+        else:
+            sys.mark_docs_submitted(email)
+            pm = user.get('creator', '')
+            nm = str(my_resume.get('name_cn', '')).strip()
+            if pm and '@' in str(pm):
+                send_email(pm, f"【聯成電腦】到職文件已上傳：{nm}",
+                           f"求職者 {nm}（{email}）已完成到職文件上傳並送出，\n"
+                           f"請登入系統『到職文件管理』查閱。\n\n聯成電腦 招募系統")
+            st.success("已送出並通知人資 PM。"); time.sleep(1); st.rerun()
+
+def _toggle_docs_enabled(email):
+    """表單管理：勾選/取消『開放到職文件』→ 寫入 resumes.docs_enabled。"""
+    sys.set_docs_enabled(email, bool(st.session_state.get(f"docen_{email}", False)))
+
+def _render_docs_admin(user):
+    """PM/admin：到職文件管理 — 查閱已上傳文件、發送補送通知。"""
+    st.subheader("📁 到職文件管理")
+    if sys._pg() is None:
+        st.error("此功能需 PostgreSQL 後端。"); return
+    df_u = load_df("users"); df_r = load_df("resumes")
+    if df_r.empty: st.info("尚無資料"); return
+    appr = df_r[df_r['status'] == 'Approved'].copy()
+    appr = appr.merge(df_u[['email', 'creator_email', 'name']], on='email', how='left')
+    if user['role'] == 'pm':
+        appr = appr[appr['creator_email'] == user['email']]
+    if appr.empty:
+        st.info("目前沒有已審查核可的求職者。"); return
+
+    app_url = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
+    st.caption("僅列出**已審查核可**的求職者。開啟上傳權限請至『表單管理』。")
+    for _, r in appr.iterrows():
+        em = str(r['email']).strip()
+        nm = str(r.get('name_cn') or r.get('name') or '').strip()
+        enabled = str(r.get('docs_enabled', '')).strip().upper() == 'Y'
+        submitted = str(r.get('docs_submitted_at', '')).strip()
+        docs = sys.docs_list(em)
+        head = (f"{'🟢開放' if enabled else '⚪未開放'}　{nm}（{em}）"
+                f"　·　已上傳 {len(docs)} 份" + (f"　·　送出 {submitted}" if submitted else ""))
+        with st.expander(head):
+            if not enabled:
+                st.caption("⚠️ 尚未於『表單管理』開啟此求職者的到職文件上傳。")
+            if not docs:
+                st.info("求職者尚未上傳任何文件。")
+            else:
+                for d in docs:
+                    cc = st.columns([3, 2, 1])
+                    cc[0].write(f"📄 {d['filename']}")
+                    cc[1].caption(f"{DOC_CAT_LABEL.get(d['category'], d['category'])}　·　{d['uploaded_at']}")
+                    # 延遲載入：按「調閱」才讀 bytea，避免 st.tabs 每次 rerun 載入所有檔案
+                    if st.session_state.get(f"want_doc_{d['id']}"):
+                        doc = _cached_doc(d['id'])
+                        if doc:
+                            cc[2].download_button("下載", doc['data'], d['filename'],
+                                                  doc['mime'] or "application/octet-stream", key=f"adl_{d['id']}")
+                    elif cc[2].button("調閱", key=f"prep_{d['id']}"):
+                        st.session_state[f"want_doc_{d['id']}"] = True; st.rerun()
+            st.divider()
+            st.markdown("**📧 補送通知**")
+            note = st.text_area("補送說明（將附於通知信）", key=f"docnote_{em}",
+                                placeholder="例如：請補上身分證反面影本；學歷證明不清晰請重傳…")
+            if st.button("發送補送通知", key=f"docsend_{em}"):
+                body = (f"{nm} 您好，\n\n您的到職文件尚需補送，說明如下：\n"
+                        f"{note.strip() or '（請補齊到職文件）'}\n\n"
+                        f"請登入系統『到職文件』頁面補傳並再次送出。\n"
+                        f"系統連結：{app_url}\n帳號：{em}\n\n聯成電腦 人資部")
+                ok, _ = send_email(em, "【聯成電腦】到職文件補送通知", body)
+                st.toast("已發送補送通知" if ok else "發送失敗，請確認 Email 設定",
+                         icon="✅" if ok else "⚠️")
+
 def candidate_page():
     user = st.session_state.user
     render_sidebar(user)
@@ -1574,11 +1794,13 @@ def candidate_page():
     status = my_resume['status']
     r_type = my_resume.get('resume_type', 'HQ')
 
-    tab_fill, tab_confirm = st.tabs(["📝 履歷填寫", "🖋️ 履歷查詢/確認"])
+    tab_fill, tab_confirm, tab_docs = st.tabs(["📝 履歷填寫", "🖋️ 履歷查詢/確認", "📎 到職文件"])
     with tab_fill:
         _render_fill(user, my_resume, status, r_type)
     with tab_confirm:
         _render_confirm(user, my_resume, status)
+    with tab_docs:
+        _render_docs(user, my_resume, status)
 
 # --- Entry ---
 if 'user' not in st.session_state: st.session_state.user = None
