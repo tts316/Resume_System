@@ -5,3 +5,5 @@ google-auth
 reportlab
 anthropic
 psycopg2-binary
+streamlit-drawable-canvas
+pillow

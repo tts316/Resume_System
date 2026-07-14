@@ -112,6 +112,9 @@ class PGBackend:
         for t in ("users", "resumes", "system_settings"):   # _rn 冪等自癒(schema 已建，通常 no-op)
             try: self.exec(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS _rn BIGSERIAL')
             except Exception: pass
+        for c in ("signature", "signed_at"):   # 履歷手寫簽名欄自癒(冪等)
+            try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
+            except Exception: pass
 
     def _connect(self):
         self.conn = _psycopg2.connect(**_pg_conn_kwargs())
@@ -258,7 +261,8 @@ class ResumeDB:
                 "military_status", "family_support", "family_debt", "commute_method", "commute_time", "height", "weight", "blood_type", 
                 "marital_status", "emergency_contact", "emergency_phone", "home_phone",
                 "holiday_shift", "rotate_shift", "family_support_shift", "care_dependent", "financial_burden", "accept_rotation",
-                "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes"
+                "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes",
+                "signature", "signed_at"
             ],
             "system_settings": ["key", "value"]
         }
@@ -356,6 +360,21 @@ class ResumeDB:
                 _invalidate_cache()
                 return True, "儲存成功"
             return False, "No Data"
+        except Exception as e: return False, str(e)
+
+    def save_signature(self, email, png_b64):
+        """儲存求職者手寫簽名(base64 PNG) + 簽署時間，單條批次寫入。"""
+        try:
+            cell = self.ws_resumes.find(email, in_column=1)
+            if not cell: return False, "查無履歷資料"
+            headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
+            updates = {}
+            if 'signature' in headers: updates['signature'] = png_b64
+            if 'signed_at' in headers: updates['signed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+            if 'signature' not in updates: return False, "資料表缺 signature 欄"
+            self._apply_updates(self.ws_resumes, cell.row, headers, updates)
+            _invalidate_cache()
+            return True, "OK"
         except Exception as e: return False, str(e)
 
     def hr_update_status(self, email, status, details=None):
@@ -705,8 +724,22 @@ def generate_pdf(data):
     # ── 7. 簽名行 ─────────────────────────────────────────────────
     elements.append(Paragraph("─" * 60, styleN))
     elements.append(Spacer(1, 6))
-    sign_text = "本人所填資料均屬事實，若有不實，願接受免職處分。　　應徵人員親簽：＿＿＿＿＿＿＿＿＿　日期：　　　年　　月　　日"
-    elements.append(Paragraph(sign_text, styleN))
+    elements.append(Paragraph("本人所填資料均屬事實，若有不實，願接受免職處分。", styleN))
+    _sig_b64 = str(data.get('signature', '')).strip()
+    _signed_at = str(data.get('signed_at', '')).strip()
+    _blank_sign = "應徵人員親簽：＿＿＿＿＿＿＿＿＿　日期：　　　年　　月　　日"
+    if _sig_b64:
+        try:
+            _raw = _sig_b64.split(',', 1)[1] if _sig_b64.startswith('data:') else _sig_b64
+            _sig_buf = io.BytesIO(base64.b64decode(_raw))
+            elements.append(Spacer(1, 4))
+            elements.append(Paragraph("應徵人員親簽：", styleN))
+            elements.append(PDFImage(_sig_buf, width=160, height=60))
+            elements.append(Paragraph(f"簽署日期：{_signed_at}", styleN))
+        except Exception:
+            elements.append(Paragraph(_blank_sign, styleN))
+    else:
+        elements.append(Paragraph(_blank_sign, styleN))
 
     try:
         qr = PDFImage("qrcode.png", width=60, height=60)
@@ -1173,11 +1206,7 @@ def admin_page():
                 sys.update_logo(f"data:image/png;base64,{b64}")
                 st.success("OK"); st.rerun()
 
-def candidate_page():
-    user = st.session_state.user
-    render_sidebar(user)
-    st.header(f"📝 履歷填寫")
-
+def _render_fill(user, my_resume, status, r_type):
     # B1: 步驟進度條
     _steps = ["① 基本資料", "② 學歷", "③ 工作經歷", "④ 其他資訊", "⑤ 確認送出"]
     st.markdown("".join(
@@ -1188,16 +1217,7 @@ def candidate_page():
         for i, s in enumerate(_steps)
     ) + "<br>", unsafe_allow_html=True)
 
-    df = load_df("resumes")
-    if df.empty: st.error("DB Error"); return
-    my_df = df[df['email'].astype(str).str.strip().str.lower() == str(user['email']).strip().lower()]
-    if my_df.empty: st.error("無履歷資料"); return
-    
-    my_resume = my_df.iloc[0]
-    status = my_resume['status']
-    r_type = my_resume.get('resume_type', 'HQ') 
-
-    if status == "Approved": 
+    if status == "Approved":
         st.balloons(); st.success("🎉 恭喜！您的履歷已審核通過。")
         with st.expander("查看面試資訊", expanded=True):
             st.write(f"📅 日期: {my_resume.get('interview_date')}")
@@ -1435,6 +1455,130 @@ def candidate_page():
                 hr = user.get('creator', '')
                 if hr and '@' in str(hr): send_email(hr, f"履歷送審: {n_cn}", f"求職者 {n_cn} 已送出履歷，請登入系統審閱。")
                 st.success("已送出"); time.sleep(1); st.rerun()
+
+# --- 履歷手寫簽名 ---
+def _send_sig_code(email):
+    """產生 6 位數驗證碼、存 session(5 分鐘有效)、寄至求職者信箱。"""
+    from datetime import timedelta
+    import random
+    code = f"{random.randint(0, 999999):06d}"
+    st.session_state['sig_code'] = code
+    st.session_state['sig_code_exp'] = datetime.now() + timedelta(minutes=5)
+    body = (f"您好，\n\n您的履歷簽名驗證碼為：{code}\n"
+            f"此驗證碼將於 5 分鐘內有效，請勿轉發他人。\n\n"
+            f"若非您本人操作，請忽略本信。\n\n聯成電腦 人資部")
+    return send_email(email, "【聯成電腦】履歷簽名驗證碼", body)
+
+def _canvas_to_png_b64(image_data):
+    """drawable-canvas 的 RGBA numpy 陣列 → 白底 PNG → base64。"""
+    from PIL import Image
+    img = Image.fromarray(image_data.astype('uint8'), 'RGBA')
+    bg = Image.new('RGBA', img.size, (255, 255, 255, 255))
+    bg.alpha_composite(img)
+    buf = io.BytesIO(); bg.convert('RGB').save(buf, format='PNG')
+    return base64.b64encode(buf.getvalue()).decode()
+
+def _render_confirm(user, my_resume, status):
+    email = str(user['email']).strip()
+
+    # ── 1. 履歷調閱 ──────────────────────────────────────────
+    st.subheader("🔎 履歷查詢 / 調閱")
+    if status in ("Submitted", "Approved", "Returned"):
+        try:
+            pdf_bytes = _cached_pdf_bytes(tuple(my_resume.items()))
+            st.download_button("📥 下載我的履歷 PDF", pdf_bytes,
+                               f"{my_resume.get('name_cn','履歷')}_履歷.pdf", "application/pdf",
+                               key="dl_my_pdf")
+            st.caption("此 PDF 為您已送出的履歷內容；完成簽名後，簽名將自動套印於下方簽名欄。")
+        except Exception as e:
+            st.error(f"PDF 產生失敗：{e}")
+    else:
+        st.info("您尚未送出履歷，暫無可調閱的 PDF。請先至「履歷填寫」完成並送出。")
+
+    st.divider()
+
+    # ── 2. 手寫簽名 ──────────────────────────────────────────
+    st.subheader("🖋️ 履歷手寫簽名")
+    if status != "Approved":
+        st.warning("履歷經人資審核**通過後**才可進行簽名，以確保履歷內容已填寫完成。")
+        return
+
+    existing = str(my_resume.get('signature', '')).strip()
+    if existing:
+        st.success(f"✅ 您已於 {my_resume.get('signed_at','')} 完成簽名。如需重簽，請重新取得驗證碼。")
+
+    # 2a. Email 驗證碼閘門
+    if not st.session_state.get('sig_verified', False):
+        st.info("為確認為本人操作，請先取得 Email 驗證碼（5 分鐘內有效），驗證後才能簽名。")
+        if st.button("📧 寄送驗證碼至我的信箱"):
+            ok, err = _send_sig_code(email)
+            if ok: st.success(f"驗證碼已寄至 {email}，請於 5 分鐘內於下方輸入。")
+            else: st.error(f"寄送失敗：{err}")
+        code_in = st.text_input("輸入 6 位數驗證碼", max_chars=6, key="sig_code_in")
+        if st.button("✅ 驗證"):
+            real = st.session_state.get('sig_code')
+            exp = st.session_state.get('sig_code_exp')
+            if not real or not exp:
+                st.error("請先按上方「寄送驗證碼」。")
+            elif datetime.now() > exp:
+                st.error("驗證碼已逾時（超過 5 分鐘），請重新寄送。")
+            elif str(code_in).strip() != real:
+                st.error("驗證碼錯誤，請重新輸入。")
+            else:
+                st.session_state['sig_verified'] = True
+                st.session_state.pop('sig_code', None)
+                st.session_state.pop('sig_code_exp', None)
+                st.success("驗證成功！請於下方方框簽名。"); time.sleep(1); st.rerun()
+        return
+
+    # 2b. 已驗證 → 顯示簽名方框
+    st.caption("請在下方方框內簽名（手機可用手指、電腦可用滑鼠或手寫板）：")
+    try:
+        from streamlit_drawable_canvas import st_canvas
+    except Exception as e:
+        st.error(f"簽名元件載入失敗（{e}）。請通知人資部。")
+        return
+    canvas = st_canvas(
+        fill_color="rgba(0,0,0,0)", stroke_width=2, stroke_color="#000000",
+        background_color="#FFFFFF", height=180, width=340,
+        drawing_mode="freedraw", key="sig_canvas",
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("💾 確認並儲存簽名", use_container_width=True):
+        img = getattr(canvas, "image_data", None)
+        if img is None or img[..., 3].sum() == 0:
+            st.warning("尚未偵測到簽名，請先在方框內簽名再儲存。")
+        else:
+            b64 = _canvas_to_png_b64(img)
+            ok, msg = sys.save_signature(email, b64)
+            if ok:
+                st.session_state['sig_verified'] = False
+                st.success("✅ 簽名已儲存，並自動套印至您的履歷 PDF。")
+                time.sleep(1); st.rerun()
+            else:
+                st.error(f"儲存失敗：{msg}")
+    if c2.button("↩️ 取消 / 重新驗證", use_container_width=True):
+        st.session_state['sig_verified'] = False
+        st.rerun()
+
+def candidate_page():
+    user = st.session_state.user
+    render_sidebar(user)
+    st.header("📝 我的履歷")
+
+    df = load_df("resumes")
+    if df.empty: st.error("DB Error"); return
+    my_df = df[df['email'].astype(str).str.strip().str.lower() == str(user['email']).strip().lower()]
+    if my_df.empty: st.error("無履歷資料"); return
+    my_resume = my_df.iloc[0]
+    status = my_resume['status']
+    r_type = my_resume.get('resume_type', 'HQ')
+
+    tab_fill, tab_confirm = st.tabs(["📝 履歷填寫", "🖋️ 履歷查詢/確認"])
+    with tab_fill:
+        _render_fill(user, my_resume, status, r_type)
+    with tab_confirm:
+        _render_confirm(user, my_resume, status)
 
 # --- Entry ---
 if 'user' not in st.session_state: st.session_state.user = None
