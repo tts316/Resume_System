@@ -911,6 +911,71 @@ def login_page():
                              "若長度正常仍失敗，可能是瀏覽器存了舊密碼。")
         st.caption("如有問題請聯繫人資部 ◆ © 聯成電腦")
 
+_INVITE_TYPE_OPTS = ["總公司 (HQ)", "分公司 (Branch)"]
+
+def _build_invite_mail(name, email, link):
+    """回傳 (plain, html) 面試邀請信內容。"""
+    plain = (f"親愛的 {name}，\n\n感謝您對聯成電腦的關注！\n請點以下連結登入填寫履歷：\n{link}\n"
+             f"帳號：{email}\n密碼：{email}\n\n聯成電腦 人資部")
+    html = f"""<html><body><div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;padding:24px">
+<img src="{LOGO_URL}" style="height:56px;margin-bottom:20px"/>
+<h2 style="color:#1F3864;margin-bottom:8px">面試邀請通知</h2>
+<p>親愛的 <strong>{name}</strong>，</p>
+<p>感謝您對聯成電腦的關注！誠摯邀請您填寫履歷表，讓我們進一步認識您。</p>
+<p style="margin:24px 0"><a href="{link}" style="background:#1F3864;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-size:15px">立即填寫履歷</a></p>
+<p style="color:#555;font-size:13px">登入帳號：{email}<br>預設密碼：{email}</p>
+<hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+<p style="color:#999;font-size:12px">此信由聯成電腦人才招募系統自動發送，請勿回覆。</p>
+</div></body></html>"""
+    return plain, html
+
+def _process_batch_invite(user, edited):
+    """批次邀請面試者：防呆檢查 → 逐筆建帳號＋寄信 → 顯示摘要。"""
+    rows = []
+    for _, r in edited.iterrows():
+        nm = str(r.get("姓名", "")).strip()
+        em = str(r.get("Email", "")).strip()
+        tp = str(r.get("履歷類型", _INVITE_TYPE_OPTS[0]))
+        if not nm and not em:
+            continue  # 整列空白 → 略過
+        rows.append((nm, em, tp))
+
+    if not rows:
+        st.warning("請至少填寫一筆邀請名單")
+        return
+
+    # 防呆：每筆「姓名 + Email」都必須填寫
+    _bad = [i + 1 for i, (nm, em, _) in enumerate(rows) if not nm or not em]
+    if _bad:
+        st.error(f"第 {', '.join(map(str, _bad))} 筆的『姓名』或『Email』未填寫，請補齊後再發送")
+        return
+
+    # 逐筆建立帳號 + 寄信
+    link = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
+    results = []
+    for nm, em, tp in rows:
+        type_code = "Branch" if "分公司" in tp else "HQ"
+        succ, msg = sys.create_user(user['email'], em, nm, "candidate", type_code)
+        if not succ:
+            results.append((nm, em, False, f"帳號建立失敗：{msg}"))
+            continue
+        plain, html = _build_invite_mail(nm, em, link)
+        ok, err = send_email(em, "【聯成電腦】面試邀請", plain, html_body=html)
+        if ok:
+            results.append((nm, em, True, "帳號已建立、邀請信已發送"))
+        else:
+            results.append((nm, em, False, f"帳號已建立，但寄信失敗：{err}"))
+
+    # 摘要
+    _ok = sum(1 for r in results if r[2])
+    _fail = len(results) - _ok
+    if _fail == 0:
+        st.success(f"✅ 批次發送完成：共 {len(results)} 筆全部成功")
+    else:
+        st.warning(f"批次發送完成：成功 {_ok} 筆、失敗 {_fail} 筆")
+    for nm, em, okf, m in results:
+        st.write(f"{'✅' if okf else '❌'} {nm}（{em}）— {m}")
+
 def admin_page():
     user = st.session_state.user
     render_sidebar(user)
@@ -922,37 +987,40 @@ def admin_page():
     
     with current_tab[0]:
         st.subheader("邀請與帳號管理")
-        c1, c2 = st.columns(2)
-        with c1.form("invite"):
-            st.write("#### 邀請面試者")
-            c_name = st.text_input("姓名"); c_email = st.text_input("Email")
-            r_type = st.radio("履歷類型", ["總公司 (HQ)", "分公司 (Branch)"], horizontal=True)
-            if st.form_submit_button("發送面試邀請"):
-                if c_name and c_email:
-                    type_code = "Branch" if "分公司" in r_type else "HQ"
-                    succ, msg = sys.create_user(user['email'], c_email, c_name, "candidate", type_code)
-                    if succ:
-                        link = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
-                        plain = f"親愛的 {c_name}，\n\n感謝您對聯成電腦的關注！\n請點以下連結登入填寫履歷：\n{link}\n帳號：{c_email}\n密碼：{c_email}\n\n聯成電腦 人資部"
-                        html = f"""<html><body><div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;padding:24px">
-<img src="{LOGO_URL}" style="height:56px;margin-bottom:20px"/>
-<h2 style="color:#1F3864;margin-bottom:8px">面試邀請通知</h2>
-<p>親愛的 <strong>{c_name}</strong>，</p>
-<p>感謝您對聯成電腦的關注！誠摯邀請您填寫履歷表，讓我們進一步認識您。</p>
-<p style="margin:24px 0"><a href="{link}" style="background:#1F3864;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-size:15px">立即填寫履歷</a></p>
-<p style="color:#555;font-size:13px">登入帳號：{c_email}<br>預設密碼：{c_email}</p>
-<hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
-<p style="color:#999;font-size:12px">此信由聯成電腦人才招募系統自動發送，請勿回覆。</p>
-</div></body></html>"""
-                        _ok, _err = send_email(c_email, "【聯成電腦】面試邀請", plain, html_body=html)
-                        if _ok:
-                            st.success(f"✅ 帳號已建立，邀請信已發送給 {c_name}")
-                        else:
-                            st.warning(f"⚠️ 帳號已建立，但 Email 發送失敗：{_err}")
-                    else: st.error(msg)
-        
+
+        # 模式切換（radio）：admin 可選兩者；人資 PM 僅能「邀請面試者」
         if user['role'] == 'admin':
-            with c2.form("create_pm"):
+            mode = st.radio("操作項目", ["邀請面試者", "建立人資 PM"],
+                            horizontal=True, key="invite_mode")
+        else:
+            mode = "邀請面試者"
+
+        if mode == "邀請面試者":
+            st.write("#### 邀請面試者（表格式，一次最多 6 筆，批次發送）")
+            st.caption("填妥各列的「姓名 / Email / 履歷類型」後，按下方按鈕一次批次發送並建立帳號。空白列會自動略過。")
+            _blank = pd.DataFrame(
+                [{"姓名": "", "Email": "", "履歷類型": _INVITE_TYPE_OPTS[0]} for _ in range(6)]
+            )
+            with st.form("invite_batch"):
+                edited = st.data_editor(
+                    _blank,
+                    num_rows="fixed",
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "姓名": st.column_config.TextColumn("姓名"),
+                        "Email": st.column_config.TextColumn("Email"),
+                        "履歷類型": st.column_config.SelectboxColumn(
+                            "履歷類型", options=_INVITE_TYPE_OPTS,
+                            required=True, default=_INVITE_TYPE_OPTS[0]),
+                    },
+                    key="invite_editor",
+                )
+                if st.form_submit_button("發送面試邀請"):
+                    _process_batch_invite(user, edited)
+        else:
+            # 建立人資 PM（僅 admin）
+            with st.form("create_pm"):
                 st.write("#### 建立人資 PM")
                 p_name = st.text_input("PM 姓名"); p_email = st.text_input("PM Email")
                 if st.form_submit_button("建立 PM"):
@@ -960,6 +1028,8 @@ def admin_page():
                         succ, msg = sys.create_user(user['email'], p_email, p_name, "pm")
                         if succ: st.success(f"PM {p_name} 建立成功")
                         else: st.error(msg)
+                    else:
+                        st.error("請填寫 PM 姓名與 Email")
 
     with current_tab[1]:
         st.subheader("履歷審核列表")
@@ -1156,6 +1226,8 @@ def admin_page():
                         merged2[col] = ''
 
                 merged2['status'] = merged2['status'].fillna('New').replace('', 'New')
+                if 'docs_enabled' not in merged2.columns:
+                    merged2['docs_enabled'] = ''
                 merged2['name_cn'] = merged2.apply(lambda r: r['name_cn'] if str(r.get('name_cn','')).strip() else r['name'], axis=1)
                 merged2['interview_dept'] = merged2.apply(
                     lambda r: r.get('interview_dept','') if str(r.get('interview_dept','')).strip()
@@ -1204,8 +1276,9 @@ def admin_page():
                             cand_name  = str(fr.get('name_cn', fr['name'])).strip()
 
                             rc = st.columns([0.8, 2, 2, 2, 2, 2])
-                            # 勾選：僅「尚未審查核可」(status != Approved) 可刪
-                            if raw_st != 'Approved':
+                            # 勾選：僅「未開放到職文件」(docs_enabled != Y) 可刪
+                            _locked = str(fr.get('docs_enabled', '')).strip().upper() == 'Y'
+                            if not _locked:
                                 rc[0].checkbox("選取", key=f"del_chk_{cand_email}", label_visibility="collapsed")
                             else:
                                 rc[0].write("🔒")
@@ -1246,9 +1319,11 @@ def admin_page():
 
                 # ── 刪除求職者帳號（勾選 → 確認 → 摘要）──────────────
                 st.divider()
-                st.caption("🗑️ 勾選上方求職者後可刪除其帳號與履歷資料（僅限**尚未審查核可**者；🔒 表示已核可、不可刪）")
+                st.caption("🗑️ 勾選上方求職者後可刪除其帳號與履歷資料（僅限**未開放到職文件**者；🔒 表示已開放到職文件、不可刪）")
                 if st.button("🗑️ 刪除勾選的帳號"):
-                    _deletable = merged2[merged2['status'] != 'Approved']
+                    _deletable = merged2[
+                        merged2['docs_enabled'].fillna('').astype(str).str.strip().str.upper() != 'Y'
+                    ]
                     _sel = [(str(r['email']).strip(), str(r.get('name_cn') or r['name']).strip())
                             for _, r in _deletable.iterrows()
                             if st.session_state.get(f"del_chk_{str(r['email']).strip()}")]
