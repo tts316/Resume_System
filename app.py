@@ -1314,6 +1314,18 @@ def admin_page():
                                 _den = str(fr.get('docs_enabled', '')).strip().upper() == 'Y'
                                 rc[5].checkbox("開放到職文件", value=_den, key=f"docen_{cand_email}",
                                                on_change=_toggle_docs_enabled, args=(cand_email,))
+                                # 提醒上傳：僅在「已開放到職文件」時可按，未開放/取消則反灰
+                                if rc[5].button("📤 提醒上傳", key=f"remind_up_{cand_email}_{_row_idx}",
+                                                disabled=not _den):
+                                    body = (f"{cand_name} 您好，\n\n"
+                                            f"恭喜您通過面試審核！系統已開放到職文件上傳，"
+                                            f"請登入系統上傳所需的到職文件。\n"
+                                            f"系統連結：{app_url}\n"
+                                            f"帳號：{cand_email}\n\n"
+                                            f"如有任何問題，歡迎聯繫人資部。\n聯成電腦 人資部")
+                                    ok, _ = send_email(cand_email, "【聯成電腦】提醒您上傳到職文件", body)
+                                    if ok: st.toast(f"已發送上傳提醒給 {cand_name}", icon="✅")
+                                    else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
                             else:
                                 rc[5].write("—")
 
