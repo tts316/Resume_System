@@ -122,7 +122,7 @@ class PGBackend:
         for t in ("users", "resumes", "system_settings"):   # _rn 冪等自癒(schema 已建，通常 no-op)
             try: self.exec(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS _rn BIGSERIAL')
             except Exception: pass
-        for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at"):   # 簽名/到職文件欄自癒(冪等)
+        for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions"):   # 簽名/到職文件/求職條件欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
         try:   # 到職文件表自癒(冪等)：檔案存 bytea，量小、免另建 GCS
@@ -784,6 +784,7 @@ def generate_pdf(data):
     bio_data = [
         ["專業技能", Paragraph(str(data.get('skills','')),    styleS)],
         ["自　　傳", Paragraph(str(data.get('self_intro','')), styleS)],
+        ["重視條件", Paragraph(str(data.get('top3_conditions','')), styleS)],
     ]
     t6 = Table(bio_data, colWidths=[65, 470])
     t6.setStyle(TableStyle([
@@ -1117,6 +1118,7 @@ def admin_page():
                         st.markdown("**【自傳】**")
                         st.write(f"**技能**: {row.get('skills')}")
                         st.text_area("自傳", value=str(row.get('self_intro','')), disabled=True, height=150, key=f"intro_ta_{row['email']}")
+                        st.write(f"**最重視的3個條件**: {row.get('top3_conditions','')}")
 
                         st.divider()
                         st.write("#### 👨‍⚖️ 審核決定")
@@ -1444,31 +1446,30 @@ def _render_fill(user, my_resume, status, r_type):
             b_type_val = my_resume.get('blood_type', 'O')
             c3.selectbox("血型", ["O", "A", "B", "AB"], index=["O", "A", "B", "AB"].index(b_type_val) if b_type_val in ["O", "A", "B", "AB"] else 0, key="blood_type")
 
-        # 學歷
+        # 學歷（比照經歷，可縮放；學歷1展開必填、學歷2/3預設縮合）
         with st.container(border=True):
             st.caption("學歷 (請填寫最高及次高學歷)")
             for i in range(1, 4):
-                st.markdown(f"**學歷 {i}**")
-                c_d1, c_d2 = st.columns(2)
-                st.session_state[f'edu_{i}_start'] = c_d1.text_input(f"入學年月 (YYYY/MM) #{i}", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in')
-                st.session_state[f'edu_{i}_end'] = c_d2.text_input(f"畢/肄業年月 (YYYY/MM) #{i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in')
+                _edu_title = f"學歷 {i}（必填）" if i == 1 else f"學歷 {i}"
+                with st.expander(_edu_title, expanded=(i == 1)):
+                    c_d1, c_d2 = st.columns(2)
+                    st.session_state[f'edu_{i}_start'] = c_d1.text_input(f"入學年月 (YYYY/MM) #{i}", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in')
+                    st.session_state[f'edu_{i}_end'] = c_d2.text_input(f"畢/肄業年月 (YYYY/MM) #{i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in')
 
-                rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
-                _sch_lbl = f"學校 {i} *" if i == 1 else f"學校 {i}"
-                _maj_lbl = f"科系 {i} *" if i == 1 else f"科系 {i}"
-                st.session_state[f'edu_{i}_school'] = rc1.text_input(_sch_lbl, value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
-                st.session_state[f'edu_{i}_major'] = rc2.text_input(_maj_lbl, value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
-                
-                d_val = my_resume.get(f'edu_{i}_degree', '學士')
-                d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
-                d_idx = d_opts.index(d_val) if d_val in d_opts else 0
-                st.session_state[f'edu_{i}_degree'] = rc3.selectbox(f"學位 {i}", d_opts, index=d_idx, key=f'edu_{i}_degree_in')
-                
-                s_val = my_resume.get(f'edu_{i}_state', '畢業')
-                s_idx = 0 if s_val != "肄業" else 1
-                st.session_state[f'edu_{i}_state'] = rc4.radio(f"狀態 {i}", ["畢業", "肄業"], index=s_idx, horizontal=True, key=f'edu_{i}_state_in', label_visibility="collapsed")
-                
-                if i < 3: st.divider()
+                    rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
+                    _sch_lbl = f"學校 {i} *" if i == 1 else f"學校 {i}"
+                    _maj_lbl = f"科系 {i} *" if i == 1 else f"科系 {i}"
+                    st.session_state[f'edu_{i}_school'] = rc1.text_input(_sch_lbl, value=my_resume.get(f'edu_{i}_school',''), key=f'edu_{i}_school_in')
+                    st.session_state[f'edu_{i}_major'] = rc2.text_input(_maj_lbl, value=my_resume.get(f'edu_{i}_major',''), key=f'edu_{i}_major_in')
+
+                    d_val = my_resume.get(f'edu_{i}_degree', '學士')
+                    d_opts = ["學士", "碩士", "博士", "高中/職", "其他"]
+                    d_idx = d_opts.index(d_val) if d_val in d_opts else 0
+                    st.session_state[f'edu_{i}_degree'] = rc3.selectbox(f"學位 {i}", d_opts, index=d_idx, key=f'edu_{i}_degree_in')
+
+                    s_val = my_resume.get(f'edu_{i}_state', '畢業')
+                    s_idx = 0 if s_val != "肄業" else 1
+                    st.session_state[f'edu_{i}_state'] = rc4.radio(f"狀態 {i}", ["畢業", "肄業"], index=s_idx, horizontal=True, key=f'edu_{i}_state_in', label_visibility="collapsed")
 
         # 經歷
         with st.container(border=True):
@@ -1576,8 +1577,19 @@ def _render_fill(user, my_resume, status, r_type):
             st.caption("技能與自傳")
             skills = st.text_area("專業技能", value=my_resume['skills'], height=100, key='skills')
             intro = st.text_area("自傳 / 工作成就", value=my_resume['self_intro'], height=150, key='self_intro')
+            st.text_area("您找工作最重視的 3 個條件為？（300 字內）",
+                         value=my_resume.get('top3_conditions', ''),
+                         height=100, max_chars=300, key='top3_conditions')
             try: st.image("qrcode.png", caption="追蹤職缺", width=100)
             except: pass
+            st.markdown(
+                '<div style="background:#B00020;color:#ffffff;font-weight:700;'
+                'padding:12px 16px;border-radius:6px;line-height:1.8;margin-top:8px">'
+                '★本人清楚知道，到職 7 日內若無故離職並未事先告知，或接受此職務時同時答應另一份工作，'
+                '公司可將個人列入人力銀行黑名單紀錄內。<br>'
+                '★本人所填上列各項資料均屬事實，若有不實或虛構，願隨時接受取消資格或無條件免職之處分，'
+                '並同時負擔公司因此所造成之損失。</div>',
+                unsafe_allow_html=True)
 
         c_s, c_d = st.columns(2)
         form_data = {
