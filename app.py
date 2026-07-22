@@ -476,16 +476,16 @@ class ResumeDB:
         except Exception as e: return False, str(e)
 
     def delete_user_account(self, email):
-        """刪除求職者帳號：resumes + users 兩表對應列。防護：已審查核可(Approved)不可刪。回傳 (bool, msg)。"""
+        """刪除求職者帳號：resumes + users 兩表對應列。防護：已開放到職文件(docs_enabled=Y)不可刪。回傳 (bool, msg)。"""
         try:
             email = str(email).strip()
             cell_r = self.ws_resumes.find(email, in_column=1)
             if cell_r:
                 headers = [h.strip().lower() for h in self.ws_resumes.row_values(1)]
-                if 'status' in headers:
-                    st_val = self.ws_resumes.cell(cell_r.row, headers.index('status') + 1).value
-                    if str(st_val).strip() == 'Approved':
-                        return False, "已審查核可，不可刪除"
+                if 'docs_enabled' in headers:
+                    dv = self.ws_resumes.cell(cell_r.row, headers.index('docs_enabled') + 1).value
+                    if str(dv).strip().upper() == 'Y':
+                        return False, "已開放到職文件，不可刪除"
                 self.ws_resumes.delete_rows(cell_r.row)
             cell_u = self.ws_users.find(email, in_column=1)
             if cell_u:
