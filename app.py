@@ -1317,6 +1317,8 @@ def admin_page():
                                     }
                                     sys.hr_update_status(row['email'], "Approved", details)
                                     
+                                    _sign_url = _secret("APP_URL", "email", "app_url",
+                                                        default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
                                     body = f"""
 {row['name_cn']} 您好，
 
@@ -1331,6 +1333,23 @@ def admin_page():
 ⚠️ 注意事項：{int_note}
 
 請準時出席，若有變動請提前聯繫。
+
+──────────────────────────────
+✍️ 請完成履歷簽名（重要）
+
+您的履歷已審核通過，請登入系統完成親筆簽名：
+
+1. 點擊系統連結登入：{_sign_url}
+   帳號：{row['email']}
+2. 進入「🖋️ 履歷查詢/確認」分頁
+3. 按「📧 寄送驗證碼至我的信箱」，系統會寄一組 6 位數驗證碼到本信箱
+   （驗證碼 5 分鐘內有效）
+4. 輸入驗證碼後，即可在簽名方框內完成簽名
+   （手機可用手指、電腦可用滑鼠或手寫板）
+
+簽名完成後會自動套印至您的履歷表，感謝您的配合。
+──────────────────────────────
+
 聯成電腦 人資部
                                     """
                                     _ok, _err = send_email(row['email'], "【聯成電腦】面試通知", body)
@@ -1381,16 +1400,18 @@ def admin_page():
                 st.info("尚無邀請記錄")
             else:
                 if not df_r2.empty:
-                    r_cols = [c for c in ['email','status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled'] if c in df_r2.columns]
+                    # 用 signed_at(短字串)判斷是否已簽名，不撈 signature(base64 大字串)以免拖慢
+                    r_cols = [c for c in ['email','status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled','signed_at'] if c in df_r2.columns]
                     merged2 = cands.merge(df_r2[r_cols], on='email', how='left')
                 else:
                     merged2 = cands.copy()
-                    for col in ['status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled']:
+                    for col in ['status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled','signed_at']:
                         merged2[col] = ''
 
                 merged2['status'] = merged2['status'].fillna('New').replace('', 'New')
-                if 'docs_enabled' not in merged2.columns:
-                    merged2['docs_enabled'] = ''
+                for _c in ('docs_enabled', 'signed_at'):
+                    if _c not in merged2.columns:
+                        merged2[_c] = ''
                 merged2['name_cn'] = merged2.apply(lambda r: r['name_cn'] if str(r.get('name_cn','')).strip() else r['name'], axis=1)
                 merged2['interview_dept'] = merged2.apply(
                     lambda r: r.get('interview_dept','') if str(r.get('interview_dept','')).strip()
@@ -1474,6 +1495,25 @@ def admin_page():
                                     if ok: st.toast(f"已發送催促通知給 {cand_name}", icon="✅")
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
                             elif raw_st == 'Approved':
+                                # 已核可但尚未簽名 → 在狀態下方出現「提醒簽名」；已簽名則顯示簽署時間
+                                _signed_at = str(fr.get('signed_at', '') or '').strip()
+                                if _signed_at:
+                                    rc[4].caption(f"✍️ 已簽名 {_signed_at}")
+                                elif rc[4].button("✍️ 提醒簽名", key=f"remind_sign_{cand_email}_{_row_idx}"):
+                                    body = (f"{cand_name} 您好，\n\n"
+                                            f"您的履歷已審核通過，尚未完成親筆簽名，提醒您盡快完成：\n\n"
+                                            f"1. 點擊系統連結登入：{app_url}\n"
+                                            f"   帳號：{cand_email}　密碼：{cand_email}\n"
+                                            f"2. 進入「🖋️ 履歷查詢/確認」分頁\n"
+                                            f"3. 按「📧 寄送驗證碼至我的信箱」，系統會寄一組 6 位數驗證碼到本信箱\n"
+                                            f"   （驗證碼 5 分鐘內有效）\n"
+                                            f"4. 輸入驗證碼後，即可在簽名方框內完成簽名\n"
+                                            f"   （手機可用手指、電腦可用滑鼠或手寫板）\n\n"
+                                            f"簽名完成後會自動套印至您的履歷表。\n\n"
+                                            f"如有任何問題，歡迎聯繫人資部。\n聯成電腦 人資部")
+                                    ok, _ = send_email(cand_email, "【聯成電腦】提醒您完成履歷簽名", body)
+                                    if ok: st.toast(f"已發送簽名提醒給 {cand_name}", icon="✅")
+                                    else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
                                 _den = str(fr.get('docs_enabled', '')).strip().upper() == 'Y'
                                 rc[5].checkbox("開放到職文件", value=_den, key=f"docen_{cand_email}",
                                                on_change=_toggle_docs_enabled, args=(cand_email,))
@@ -1979,6 +2019,15 @@ def _render_confirm(user, my_resume, status):
             ok, msg = sys.save_signature(email, b64)
             if ok:
                 st.session_state['sig_verified'] = False
+                # 通知發送邀請的人資 PM/admin：該求職者已完成簽名
+                _hr = str(user.get('creator', '') or '').strip()
+                if _hr and '@' in _hr:
+                    _nm = str(my_resume.get('name_cn', '') or user.get('name', '') or email)
+                    send_email(_hr, f"【聯成電腦】{_nm} 已完成履歷簽名",
+                               f"您好，\n\n求職者 {_nm}（{email}）已於 "
+                               f"{datetime.now().strftime('%Y-%m-%d %H:%M')} 完成履歷親筆簽名。\n"
+                               f"可登入系統至「履歷審核」下載含簽名的履歷 PDF。\n\n"
+                               f"聯成電腦 人才招募系統")
                 st.success("✅ 簽名已儲存，並自動套印至您的履歷 PDF。")
                 time.sleep(1); st.rerun()
             else:
