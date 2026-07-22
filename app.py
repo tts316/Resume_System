@@ -69,6 +69,19 @@ def _zodiac_of(d):
     _, start_day, name = _ZODIAC[m - 1]
     return name if day >= start_day else _ZODIAC[m - 2][2]
 
+def _org_label(u):
+    """組織單位 → 顯示字串，例：行政群 / 行銷部 / 企劃處、北一區 / 館前。"""
+    return " / ".join([p for p in (u.get("l1", ""), u.get("l2", ""), u.get("l3", "")) if str(p).strip()])
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _org_options(kind_group):
+    """面試單位選項（快取 60 秒）。kind_group: 'HQ'(含獨立單位) 或 'Branch'。"""
+    kinds = ["HQ", "Standalone"] if kind_group == "HQ" else ["Branch"]
+    out = []
+    for k in kinds:
+        out += [_org_label(u) for u in sys.get_org_units(k) if _org_label(u)]
+    return out
+
 def _lang_summary(data):
     """語言能力 3 組 → 顯示字串，例：英文(優)、日文(普通)。"""
     parts = []
@@ -177,7 +190,8 @@ class PGBackend:
             try: self.exec(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS _rn BIGSERIAL')
             except Exception: pass
         for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
-                  "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level"):   # 簽名/到職文件/求職條件/語言能力欄自癒(冪等)
+                  "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level",
+                  "zodiac", "interview_unit"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
         try:   # 到職文件表自癒(冪等)：檔案存 bytea，量小、免另建 GCS
@@ -187,6 +201,36 @@ class PGBackend:
                 mime TEXT NOT NULL DEFAULT '', data BYTEA NOT NULL,
                 uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now())''')
             self.exec('CREATE INDEX IF NOT EXISTS idx_onboarding_email ON onboarding_docs(email)')
+        except Exception: pass
+        try:
+            # 公司組織架構（admin 可維護）：一列 = 一個單位路徑
+            #   HQ        l1=群 / l2=部(可空，處可直屬群) / l3=處(可空)
+            #   Branch    l1=群 / l2=區域 / l3=分公司
+            #   Standalone 獨立單位(總經理室/董事長室)，只用 l3
+            self.exec('''CREATE TABLE IF NOT EXISTS org_units (
+                id BIGSERIAL PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'HQ',
+                l1 TEXT NOT NULL DEFAULT '',
+                l2 TEXT NOT NULL DEFAULT '',
+                l3 TEXT NOT NULL DEFAULT '',
+                sort_order INT NOT NULL DEFAULT 0
+            )''')
+            self.exec('CREATE INDEX IF NOT EXISTS idx_org_kind ON org_units(kind, sort_order, id)')
+            # 首次建立時灌入預設組織（之後由 admin 於「設定」分頁維護，不再覆寫）
+            if (self.exec('SELECT count(*) FROM org_units', fetch="one") or [0])[0] == 0:
+                seed = []
+                for n in ["行銷部", "技服部", "財務部", "人資部", "總務部", "招生部", "資教部"]:
+                    seed.append(("HQ", "", n, ""))
+                for n in ["行政群", "電腦群", "數位群", "行銷群"]:
+                    seed.append(("HQ", n, "", ""))
+                for n in ["總經理室", "董事長室"]:
+                    seed.append(("Standalone", "", "", n))
+                for _reg, _brs in BRANCH_DATA.items():
+                    for _b in _brs:
+                        seed.append(("Branch", "", _reg, _b))
+                for i, (k, a, b, c) in enumerate(seed):
+                    self.exec('INSERT INTO org_units (kind,l1,l2,l3,sort_order) VALUES (%s,%s,%s,%s,%s)',
+                              (k, a, b, c, i))
         except Exception: pass
 
     def _connect(self):
@@ -336,7 +380,8 @@ class ResumeDB:
                 "holiday_shift", "rotate_shift", "family_support_shift", "care_dependent", "financial_burden", "accept_rotation",
                 "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes",
                 "signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
-                "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level"
+                "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level", "zodiac",
+                "interview_unit"
             ],
             "system_settings": ["key", "value"]
         }
@@ -367,7 +412,7 @@ class ResumeDB:
             return None
         except: return None
 
-    def create_user(self, creator_email, email, name, role, r_type=""):
+    def create_user(self, creator_email, email, name, role, r_type="", unit=""):
         try:
             email = str(email).strip()
             name = str(name).strip()
@@ -380,8 +425,13 @@ class ResumeDB:
                 # (舊 bug：r_type 被放到 index 51=exp_4_co，而非 resume_type@61)
                 headers = [str(h).strip().lower() for h in self.ws_resumes.row_values(1)]
                 row_data = [""] * len(headers)
-                for col, val in [("email", email), ("status", "New"),
-                                 ("name_cn", name), ("resume_type", r_type)]:
+                _init = [("email", email), ("status", "New"),
+                         ("name_cn", name), ("resume_type", r_type), ("interview_unit", unit)]
+                # 分公司：面試單位「區域 / 分公司」一併帶入求職者的區域與分校欄位
+                if r_type == "Branch" and " / " in str(unit):
+                    _p = [x.strip() for x in str(unit).split(" / ")]
+                    _init += [("branch_region", _p[-2]), ("branch_location", _p[-1])]
+                for col, val in _init:
                     if col in headers:
                         row_data[headers.index(col)] = val
                 self.ws_resumes.append_row(row_data)
@@ -430,6 +480,9 @@ class ResumeDB:
                         if isinstance(val, (date, datetime)):
                             val = str(val)
                         updates[clean_key] = val
+                # 星座一律由生日重算後覆寫，確保永遠與生日同步(不依賴前端傳入)
+                if 'zodiac' in headers and data.get('dob'):
+                    updates['zodiac'] = _zodiac_of(data.get('dob'))
                 self._apply_updates(self.ws_resumes, r, headers, updates)  # 批次寫入
                 _invalidate_cache()
                 return True, "儲存成功"
@@ -450,6 +503,32 @@ class ResumeDB:
             _invalidate_cache()
             return True, "OK"
         except Exception as e: return False, str(e)
+
+    def get_org_units(self, kind=None):
+        """讀組織架構，回傳 list[dict]；kind 可為 HQ/Branch/Standalone。需 PG 後端。"""
+        b = self._pg()
+        if b is None: return []
+        sql = 'SELECT id,kind,l1,l2,l3,sort_order FROM org_units'
+        params = ()
+        if kind:
+            sql += ' WHERE kind=%s'; params = (kind,)
+        sql += ' ORDER BY sort_order, id'
+        rows = b.exec(sql, params, fetch="all") or []
+        return [{"id": r[0], "kind": r[1], "l1": r[2], "l2": r[3], "l3": r[4], "sort_order": r[5]}
+                for r in rows]
+
+    def replace_org_units(self, kind, rows):
+        """以 rows 全量取代某 kind 的組織資料（admin 維護表單用）。rows=[(l1,l2,l3), ...]"""
+        b = self._pg()
+        if b is None: return False, "此功能需 PostgreSQL 後端"
+        try:
+            b.exec('DELETE FROM org_units WHERE kind=%s', (kind,))
+            for i, (a, c, d) in enumerate(rows):
+                b.exec('INSERT INTO org_units (kind,l1,l2,l3,sort_order) VALUES (%s,%s,%s,%s,%s)',
+                       (kind, a, c, d, i))
+            return True, f"已儲存 {len(rows)} 筆"
+        except Exception as e:
+            return False, str(e)
 
     def _update_resume_fields(self, email, updates):
         """通用：依欄名批次更新 resumes 單列(只寫實際存在的欄)。"""
@@ -725,7 +804,7 @@ def generate_pdf(data):
 
     p_data = [
         ["姓　名",   wp(f"{data.get('name_cn','')}  {data.get('name_en','')}"),
-         "應徵職務", wp("一般人員")],
+         "面試單位", wp(str(data.get('interview_unit','') or '一般人員'))],
         ["電子信箱", wp(data.get('email','')),
          "聯絡電話", wp(data.get('phone',''))],
         ["出生日期", wp(f"{data.get('dob','')}  {_zodiac_of(data.get('dob',''))}"),
@@ -970,15 +1049,20 @@ def login_page():
 
 _INVITE_TYPE_OPTS = ["總公司 (HQ)", "分公司 (Branch)"]
 
-def _build_invite_mail(name, email, link):
+def _build_invite_mail(name, email, link, unit=""):
     """回傳 (plain, html) 面試邀請信內容。"""
-    plain = (f"親愛的 {name}，\n\n感謝您對聯成電腦的關注！\n請點以下連結登入填寫履歷：\n{link}\n"
+    _u_txt = f"面試單位：{unit}\n" if unit else ""
+    _u_html = (f'<p style="color:#1F3864;font-size:14px"><strong>面試單位：</strong>{unit}</p>'
+               if unit else "")
+    plain = (f"親愛的 {name}，\n\n感謝您對聯成電腦的關注！\n{_u_txt}"
+             f"請點以下連結登入填寫履歷：\n{link}\n"
              f"帳號：{email}\n密碼：{email}\n\n聯成電腦 人資部")
     html = f"""<html><body><div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;padding:24px">
 <img src="{LOGO_URL}" style="height:56px;margin-bottom:20px"/>
 <h2 style="color:#1F3864;margin-bottom:8px">歡迎您參加聯成電腦面試</h2>
 <p>親愛的 <strong>{name}</strong>，</p>
 <p>感謝您對聯成電腦的關注！誠摯邀請您填寫履歷表，讓我們進一步認識您。</p>
+{_u_html}
 <p style="margin:24px 0"><a href="{link}" style="background:#1F3864;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-size:15px">立即填寫履歷</a></p>
 <p style="color:#555;font-size:13px">登入帳號：{email}<br>預設密碼：{email}</p>
 <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
@@ -993,30 +1077,42 @@ def _process_batch_invite(user, edited):
         nm = str(r.get("姓名", "")).strip()
         em = str(r.get("Email", "")).strip()
         tp = str(r.get("履歷類型", _INVITE_TYPE_OPTS[0]))
+        un = str(r.get("面試單位", "") or "").strip()
         if not nm and not em:
             continue  # 整列空白 → 略過
-        rows.append((nm, em, tp))
+        rows.append((nm, em, tp, un))
 
     if not rows:
         st.warning("請至少填寫一筆邀請名單")
         return
 
-    # 防呆：每筆「姓名 + Email」都必須填寫
-    _bad = [i + 1 for i, (nm, em, _) in enumerate(rows) if not nm or not em]
+    # 防呆：每筆「姓名 + Email + 面試單位」都必須填寫
+    _bad = [i + 1 for i, (nm, em, _t, un) in enumerate(rows) if not nm or not em or not un]
     if _bad:
-        st.error(f"第 {', '.join(map(str, _bad))} 筆的『姓名』或『Email』未填寫，請補齊後再發送")
+        st.error(f"第 {', '.join(map(str, _bad))} 筆的『姓名』『Email』或『面試單位』未填寫，請補齊後再發送")
+        return
+
+    # 防呆：面試單位需與履歷類型相符（分公司不可選總公司單位，反之亦然）
+    _mismatch = []
+    for i, (_n, _e, tp, un) in enumerate(rows):
+        _grp = "Branch" if "分公司" in tp else "HQ"
+        if un not in _org_options(_grp):
+            _mismatch.append(i + 1)
+    if _mismatch:
+        st.error(f"第 {', '.join(map(str, _mismatch))} 筆的『面試單位』與『履歷類型』不符，"
+                 f"請改選對應類型的單位（總公司↔總公司單位、分公司↔分公司）")
         return
 
     # 逐筆建立帳號 + 寄信
     link = _secret("APP_URL", "email", "app_url", default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
     results = []
-    for nm, em, tp in rows:
+    for nm, em, tp, un in rows:
         type_code = "Branch" if "分公司" in tp else "HQ"
-        succ, msg = sys.create_user(user['email'], em, nm, "candidate", type_code)
+        succ, msg = sys.create_user(user['email'], em, nm, "candidate", type_code, unit=un)
         if not succ:
             results.append((nm, em, False, f"帳號建立失敗：{msg}"))
             continue
-        plain, html = _build_invite_mail(nm, em, link)
+        plain, html = _build_invite_mail(nm, em, link, unit=un)
         ok, err = send_email(em, "【聯成電腦】歡迎您參加聯成電腦面試", plain, html_body=html)
         if ok:
             results.append((nm, em, True, "帳號已建立、邀請信已發送"))
@@ -1055,8 +1151,12 @@ def admin_page():
         if mode == "邀請面試者":
             st.write("#### 邀請面試者（表格式，一次最多 6 筆，批次發送）")
             st.caption("填妥各列的「姓名 / Email / 履歷類型」後，按下方按鈕一次批次發送並建立帳號。空白列會自動略過。")
+            _unit_opts = _org_options("HQ") + _org_options("Branch")
+            if not _unit_opts:
+                st.warning("尚未設定公司組織單位，請先至「⚙️ 設定 → 公司組織維護」建立後再發送邀請。")
             _blank = pd.DataFrame(
-                [{"姓名": "", "Email": "", "履歷類型": _INVITE_TYPE_OPTS[0]} for _ in range(6)]
+                [{"姓名": "", "Email": "", "履歷類型": _INVITE_TYPE_OPTS[0], "面試單位": None}
+                 for _ in range(6)]
             )
             with st.form("invite_batch"):
                 edited = st.data_editor(
@@ -1070,6 +1170,9 @@ def admin_page():
                         "履歷類型": st.column_config.SelectboxColumn(
                             "履歷類型", options=_INVITE_TYPE_OPTS,
                             required=True, default=_INVITE_TYPE_OPTS[0]),
+                        "面試單位": st.column_config.SelectboxColumn(
+                            "面試單位", options=_unit_opts,
+                            help="總公司類型請選總公司單位；分公司類型請選『區域 / 分公司』"),
                     },
                     key="invite_editor",
                 )
@@ -1438,11 +1541,55 @@ def admin_page():
 
     if user['role'] == 'admin':
         with current_tab[4]:
+            st.subheader("Logo")
             up = st.file_uploader("Logo 更新", type=['png','jpg'])
             if up and st.button("更新"):
                 b64 = base64.b64encode(up.getvalue()).decode()
                 sys.update_logo(f"data:image/png;base64,{b64}")
                 st.success("OK"); st.rerun()
+            st.divider()
+            _render_org_admin()
+
+def _render_org_admin():
+    """admin：公司組織架構維護（總公司 3 層 / 分公司 3 層 / 獨立單位）。"""
+    st.subheader("🏢 公司組織維護")
+    if sys._pg() is None:
+        st.error("此功能需 PostgreSQL 後端。"); return
+    st.caption("直接於表格編輯，可新增/刪除列；改完按各區塊的「儲存」。此處維護的單位會成為"
+               "「發送邀請」的**面試單位**選項。")
+
+    _specs = [
+        ("HQ", "總公司（群 / 部 / 處）", ["群", "部", "處"],
+         "3 層由上而下：群 / 部 / 處。『處』可直屬群 → 『部』留空即可。"),
+        ("Branch", "分公司（群 / 區域 / 分公司）", ["群", "區域", "分公司"],
+         "3 層由上而下：群 / 區域 / 分公司。無群可留空。"),
+        ("Standalone", "總公司獨立單位", ["", "", "單位名稱"],
+         "如：總經理室、董事長室。僅填「單位名稱」。"),
+    ]
+    for kind, title, cols, hint in _specs:
+        with st.expander(title, expanded=(kind == "HQ")):
+            st.caption(hint)
+            _cur = sys.get_org_units(kind)
+            _labels = [c for c in cols if c]          # Standalone 只有一欄
+            _df = pd.DataFrame(
+                [{lb: u[f"l{cols.index(lb) + 1}"] for lb in _labels} for u in _cur]
+            ) if _cur else pd.DataFrame(columns=_labels)
+            _ed = st.data_editor(_df, num_rows="dynamic", hide_index=True,
+                                 use_container_width=True, key=f"org_ed_{kind}")
+            if st.button("💾 儲存", key=f"org_save_{kind}"):
+                rows = []
+                for _, r in _ed.iterrows():
+                    vals = ["", "", ""]
+                    for lb in _labels:
+                        vals[cols.index(lb)] = str(r.get(lb, "") or "").strip()
+                    if any(vals):                      # 整列空白略過
+                        rows.append(tuple(vals))
+                ok, msg = sys.replace_org_units(kind, rows)
+                if ok:
+                    _org_options.clear()
+                    st.success(msg); time.sleep(1); st.rerun()
+                else:
+                    st.error(f"儲存失敗：{msg}")
 
 def _render_fill(user, my_resume, status, r_type):
     # B1: 步驟進度條
@@ -1474,6 +1621,9 @@ def _render_fill(user, my_resume, status, r_type):
 
     with st.form("resume_form"):
         st.markdown(f"### {'🏢 總公司內勤' if r_type == 'HQ' else '🏪 分公司門市'} 履歷表")
+        _iu = str(my_resume.get('interview_unit', '') or '').strip()
+        if _iu:
+            st.info(f"📍 您的面試單位：**{_iu}**")
         
         # 基本資料
         with st.container(border=True):
@@ -1501,9 +1651,10 @@ def _render_fill(user, my_resume, status, r_type):
             
             b_type_val = my_resume.get('blood_type', 'O')
             c3.selectbox("血型", ["O", "A", "B", "AB"], index=["O", "A", "B", "AB"].index(b_type_val) if b_type_val in ["O", "A", "B", "AB"] else 0, key="blood_type")
-            # 星座：依生日自動對應（唯讀，不需填寫；改生日後存檔即更新）
+            # 星座：依生日自動對應（唯讀）。表單內無法即時重算，故提供「更新星座」按鈕觸發重跑
             c4.text_input("星座", value=_zodiac_of(dob), disabled=True,
-                          help="依「生日」自動帶出，修改生日並暫存/送出後即更新")
+                          help="依「生日」自動帶出。改完生日請按下方「更新星座」，或直接送出時系統會自動更正")
+            _zod_refresh = c4.form_submit_button("🔄 更新星座", use_container_width=True)
 
         # 學歷（比照經歷，可縮放；學歷1展開必填、學歷2/3預設縮合）
         with st.container(border=True):
@@ -1684,6 +1835,12 @@ def _render_fill(user, my_resume, status, r_type):
             form_data['branch_location'] = loc_val
             form_data['accept_rotation'] = rot_val
 
+        # 「更新星座」：表單內無法即時重算，按下後存檔並重跑，星座即依新生日更新
+        if _zod_refresh:
+            sys.save_resume(user['email'], form_data, status if status in ("Submitted", "Approved", "Returned") else "Draft")
+            st.success(f"已依生日 {dob} 更新星座為「{_zodiac_of(dob)}」")
+            time.sleep(1); st.rerun()
+
         if c_s.form_submit_button("💾 暫存"):
             sys.save_resume(user['email'], form_data, "Draft")
             st.success("已暫存"); time.sleep(1); st.rerun()
@@ -1713,10 +1870,17 @@ def _render_fill(user, my_resume, status, r_type):
             elif r_type == "Branch" and rot_val == "是" and "輪調" not in loc_val:
                 st.error("請至少勾選一個可配合輪調的分校")
             else:
+                # 送出前檢核：星座若與生日不符(例如改了生日沒按更新)，存檔時已自動重算，這裡提示使用者
+                _z_new = _zodiac_of(dob)
+                _z_old = str(my_resume.get('zodiac', '') or '').strip()
                 sys.save_resume(user['email'], form_data, "Submitted")
                 hr = user.get('creator', '')
                 if hr and '@' in str(hr): send_email(hr, f"履歷送審: {n_cn}", f"求職者 {n_cn} 已送出履歷，請登入系統審閱。")
-                st.success("已送出"); time.sleep(1); st.rerun()
+                st.success("已送出")
+                if _z_new and _z_new != _z_old:
+                    st.info(f"ℹ️ 已依您填寫的生日 {dob}，自動更新星座為「{_z_new}」")
+                    time.sleep(2)
+                time.sleep(1); st.rerun()
 
 # --- 履歷手寫簽名 ---
 def _send_sig_code(email):
