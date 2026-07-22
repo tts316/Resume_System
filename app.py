@@ -47,6 +47,60 @@ SENDER_PASSWORD = ""
 # Logo URL
 LOGO_URL = "https://www.lccnet.com.tw/lccnet/img/nav-logo.png"
 
+# 語言能力選單（全球前 15 大語言 + 在台常見）
+LANG_OPTS = ["", "英文", "日文", "韓文", "西班牙文", "法文", "德文", "越南文", "泰文",
+             "印尼文", "馬來文", "俄文", "義大利文", "葡萄牙文", "阿拉伯文", "印地文"]
+LANG_LEVELS = ["", "優", "普通", "略通"]
+
+# 星座（依生日自動對應）；每列 = (月, 該星座起始日, 該月開始的星座)
+_ZODIAC = [(1, 20, "水瓶座"), (2, 19, "雙魚座"), (3, 21, "牡羊座"), (4, 20, "金牛座"),
+           (5, 21, "雙子座"), (6, 22, "巨蟹座"), (7, 23, "獅子座"), (8, 23, "處女座"),
+           (9, 23, "天秤座"), (10, 24, "天蠍座"), (11, 22, "射手座"), (12, 22, "摩羯座")]
+
+def _zodiac_of(d):
+    """由生日(date 或 YYYY-MM-DD 字串)推算星座；無法判定回傳空字串。
+    當日 >= 該月星座起始日 → 該月星座；否則 → 前一個月的星座。"""
+    try:
+        if not isinstance(d, (date, datetime)):
+            d = pd.to_datetime(str(d))
+        m, day = int(d.month), int(d.day)
+    except Exception:
+        return ""
+    _, start_day, name = _ZODIAC[m - 1]
+    return name if day >= start_day else _ZODIAC[m - 2][2]
+
+def _lang_summary(data):
+    """語言能力 3 組 → 顯示字串，例：英文(優)、日文(普通)。"""
+    parts = []
+    for i in (1, 2, 3):
+        lg = str(data.get(f'lang_{i}', '') or '').strip()
+        lv = str(data.get(f'lang_{i}_level', '') or '').strip()
+        if lg:
+            parts.append(f"{lg}({lv})" if lv else lg)
+    return "、".join(parts)
+
+def _ym_picker(container, label, saved, key_prefix, min_year=1950, future_years=6):
+    """年/月下拉選單，回傳 'YYYY/MM'（未選完整回傳 ''）。取代純手打的 YYYY/MM 文字框。"""
+    years = [""] + [str(y) for y in range(date.today().year + future_years, min_year - 1, -1)]
+    months = [""] + [f"{m:02d}" for m in range(1, 13)]
+    sy = sm = ""
+    _s = str(saved or "").strip().replace("-", "/")
+    if "/" in _s:
+        _p = _s.split("/")
+        sy = _p[0].strip()
+        sm = _p[1].strip().zfill(2) if len(_p) > 1 else ""
+    cy, cm = container.columns(2)
+    y = cy.selectbox(f"{label} 年", years,
+                     index=years.index(sy) if sy in years else 0, key=f"{key_prefix}_y")
+    m = cm.selectbox(f"{label} 月", months,
+                     index=months.index(sm) if sm in months else 0, key=f"{key_prefix}_m")
+    if y and m:
+        return f"{y}/{m}"
+    # 舊資料是自由輸入，若原值無法解析成年/月(如「2010年9月」)，原樣保留不清空，避免改版誤刪既有資料
+    if _s and sy not in years[1:] and sm not in months[1:]:
+        return str(saved).strip()
+    return ""
+
 # 分公司區域資料
 BRANCH_DATA = {
     "北一區": ["館前", "公館", "忠孝", "士林", "基隆", "羅東"],
@@ -122,7 +176,8 @@ class PGBackend:
         for t in ("users", "resumes", "system_settings"):   # _rn 冪等自癒(schema 已建，通常 no-op)
             try: self.exec(f'ALTER TABLE "{t}" ADD COLUMN IF NOT EXISTS _rn BIGSERIAL')
             except Exception: pass
-        for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions"):   # 簽名/到職文件/求職條件欄自癒(冪等)
+        for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
+                  "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level"):   # 簽名/到職文件/求職條件/語言能力欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
         try:   # 到職文件表自癒(冪等)：檔案存 bytea，量小、免另建 GCS
@@ -280,7 +335,8 @@ class ResumeDB:
                 "marital_status", "emergency_contact", "emergency_phone", "home_phone",
                 "holiday_shift", "rotate_shift", "family_support_shift", "care_dependent", "financial_burden", "accept_rotation",
                 "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes",
-                "signature", "signed_at", "docs_enabled", "docs_submitted_at"
+                "signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
+                "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level"
             ],
             "system_settings": ["key", "value"]
         }
@@ -672,11 +728,11 @@ def generate_pdf(data):
          "應徵職務", wp("一般人員")],
         ["電子信箱", wp(data.get('email','')),
          "聯絡電話", wp(data.get('phone',''))],
-        ["出生日期", wp(data.get('dob','')),
+        ["出生日期", wp(f"{data.get('dob','')}  {_zodiac_of(data.get('dob',''))}"),
          "婚姻/血型", wp(f"{data.get('marital_status','')} / {data.get('blood_type','')}")],
         ["通訊地址", wp(data.get('address','')),
          "緊急聯絡", wp(f"{data.get('emergency_contact','')} {data.get('emergency_phone','')}")],
-        ["身高/體重", wp(f"{data.get('height','')} cm / {data.get('weight','')} kg"),
+        ["語言能力", wp(_lang_summary(data)),
          "交通方式", wp(f"{data.get('commute_method','')} 約{data.get('commute_time','')}分")],
     ]
     info_tbl = Table(p_data, colWidths=[75, 192, 75, 193])
@@ -783,8 +839,8 @@ def generate_pdf(data):
     elements.append(sec_hdr("▌ 專業技能與自傳"))
     bio_data = [
         ["專業技能", Paragraph(str(data.get('skills','')),    styleS)],
-        ["自　　傳", Paragraph(str(data.get('self_intro','')), styleS)],
-        ["重視條件", Paragraph(str(data.get('top3_conditions','')), styleS)],
+        ["成就特質", Paragraph(str(data.get('self_intro','')), styleS)],
+        ["條件優勢", Paragraph(str(data.get('top3_conditions','')), styleS)],
     ]
     t6 = Table(bio_data, colWidths=[65, 470])
     t6.setStyle(TableStyle([
@@ -920,7 +976,7 @@ def _build_invite_mail(name, email, link):
              f"帳號：{email}\n密碼：{email}\n\n聯成電腦 人資部")
     html = f"""<html><body><div style="font-family:Arial,sans-serif;max-width:580px;margin:auto;padding:24px">
 <img src="{LOGO_URL}" style="height:56px;margin-bottom:20px"/>
-<h2 style="color:#1F3864;margin-bottom:8px">面試邀請通知</h2>
+<h2 style="color:#1F3864;margin-bottom:8px">歡迎您參加聯成電腦面試</h2>
 <p>親愛的 <strong>{name}</strong>，</p>
 <p>感謝您對聯成電腦的關注！誠摯邀請您填寫履歷表，讓我們進一步認識您。</p>
 <p style="margin:24px 0"><a href="{link}" style="background:#1F3864;color:white;padding:12px 28px;text-decoration:none;border-radius:6px;font-size:15px">立即填寫履歷</a></p>
@@ -961,7 +1017,7 @@ def _process_batch_invite(user, edited):
             results.append((nm, em, False, f"帳號建立失敗：{msg}"))
             continue
         plain, html = _build_invite_mail(nm, em, link)
-        ok, err = send_email(em, "【聯成電腦】面試邀請", plain, html_body=html)
+        ok, err = send_email(em, "【聯成電腦】歡迎您參加聯成電腦面試", plain, html_body=html)
         if ok:
             results.append((nm, em, True, "帳號已建立、邀請信已發送"))
         else:
@@ -1074,8 +1130,8 @@ def admin_page():
                         c1.write(f"**姓名**: {row['name_cn']} ({row.get('name_en','')})")
                         c2.write(f"**電話**: {row['phone']} / {row.get('home_phone')}")
                         c3.write(f"**Email**: {row['email']}")
-                        c4.write(f"**生日**: {row['dob']}")
-                        
+                        c4.write(f"**生日**: {row['dob']}　**星座**: {_zodiac_of(row.get('dob',''))}")
+
                         c5, c6, c7, c8 = st.columns(4)
                         c5.write(f"**地址**: {row['address']}")
                         c6.write(f"**市話**: {row.get('home_phone')}")
@@ -1085,6 +1141,7 @@ def admin_page():
                         c9, c10 = st.columns(2)
                         c9.write(f"**緊急聯絡**: {row.get('emergency_contact')} ({row.get('emergency_phone')})")
                         c10.write(f"**通勤**: {row.get('commute_method')} ({row.get('commute_time')}分)")
+                        st.write(f"**語言能力**: {_lang_summary(row) or '—'}")
 
                         st.markdown("**【學歷】**")
                         for x in range(1, 4):
@@ -1117,8 +1174,9 @@ def admin_page():
 
                         st.markdown("**【自傳】**")
                         st.write(f"**技能**: {row.get('skills')}")
-                        st.text_area("自傳", value=str(row.get('self_intro','')), disabled=True, height=150, key=f"intro_ta_{row['email']}")
-                        st.write(f"**最重視的3個條件**: {row.get('top3_conditions','')}")
+                        st.text_area("工作成就及個性特質(優缺點)", value=str(row.get('self_intro','')),
+                                     disabled=True, height=150, key=f"intro_ta_{row['email']}")
+                        st.write(f"**最重視的3個條件及適任優勢**: {row.get('top3_conditions','')}")
 
                         st.divider()
                         st.write("#### 👨‍⚖️ 審核決定")
@@ -1423,9 +1481,7 @@ def _render_fill(user, my_resume, status, r_type):
             c1, c2, c3, c4 = st.columns(4)
             n_cn = c1.text_input("中文姓名 *", value=my_resume['name_cn'], key='name_cn')
             n_en = c2.text_input("英文姓名", value=my_resume['name_en'], key='name_en')
-            c3.text_input("身高(cm)", value=my_resume.get('height',''), key='height')
-            c4.text_input("體重(kg)", value=my_resume.get('weight',''), key='weight')
-            
+
             c5, c6, c7 = st.columns([2, 1, 1])
             phone = c5.text_input("手機 *", value=my_resume['phone'], key='phone')
             c6.text_input("市話 (H)", value=my_resume.get('home_phone',''), key='home_phone')
@@ -1445,6 +1501,9 @@ def _render_fill(user, my_resume, status, r_type):
             
             b_type_val = my_resume.get('blood_type', 'O')
             c3.selectbox("血型", ["O", "A", "B", "AB"], index=["O", "A", "B", "AB"].index(b_type_val) if b_type_val in ["O", "A", "B", "AB"] else 0, key="blood_type")
+            # 星座：依生日自動對應（唯讀，不需填寫；改生日後存檔即更新）
+            c4.text_input("星座", value=_zodiac_of(dob), disabled=True,
+                          help="依「生日」自動帶出，修改生日並暫存/送出後即更新")
 
         # 學歷（比照經歷，可縮放；學歷1展開必填、學歷2/3預設縮合）
         with st.container(border=True):
@@ -1453,8 +1512,10 @@ def _render_fill(user, my_resume, status, r_type):
                 _edu_title = f"學歷 {i}（必填）" if i == 1 else f"學歷 {i}"
                 with st.expander(_edu_title, expanded=(i == 1)):
                     c_d1, c_d2 = st.columns(2)
-                    st.session_state[f'edu_{i}_start'] = c_d1.text_input(f"入學年月 (YYYY/MM) #{i}", value=my_resume.get(f'edu_{i}_start',''), key=f'edu_{i}_start_in')
-                    st.session_state[f'edu_{i}_end'] = c_d2.text_input(f"畢/肄業年月 (YYYY/MM) #{i}", value=my_resume.get(f'edu_{i}_end',''), key=f'edu_{i}_end_in')
+                    st.session_state[f'edu_{i}_start'] = _ym_picker(
+                        c_d1, f"入學年月 #{i}", my_resume.get(f'edu_{i}_start', ''), f'edu_{i}_start')
+                    st.session_state[f'edu_{i}_end'] = _ym_picker(
+                        c_d2, f"畢/肄業年月 #{i}", my_resume.get(f'edu_{i}_end', ''), f'edu_{i}_end')
 
                     rc1, rc2, rc3, rc4 = st.columns([2, 2, 1, 1])
                     _sch_lbl = f"學校 {i} *" if i == 1 else f"學校 {i}"
@@ -1477,8 +1538,10 @@ def _render_fill(user, my_resume, status, r_type):
             for i in range(1, 5):
                 with st.expander(f"經歷 {i}"):
                     c_ym1, c_ym2 = st.columns(2)
-                    st.session_state[f'exp_{i}_start'] = c_ym1.text_input(f"起始年月 (YYYY/MM)", value=my_resume.get(f'exp_{i}_start',''), key=f'exp_{i}_start_in')
-                    st.session_state[f'exp_{i}_end'] = c_ym2.text_input(f"結束年月 (YYYY/MM)", value=my_resume.get(f'exp_{i}_end',''), key=f'exp_{i}_end_in')
+                    st.session_state[f'exp_{i}_start'] = _ym_picker(
+                        c_ym1, "起始年月", my_resume.get(f'exp_{i}_start', ''), f'exp_{i}_start')
+                    st.session_state[f'exp_{i}_end'] = _ym_picker(
+                        c_ym2, "結束年月", my_resume.get(f'exp_{i}_end', ''), f'exp_{i}_end')
 
                     ec1, ec2, ec3 = st.columns([2, 2, 1])
                     st.session_state[f'exp_{i}_co'] = ec1.text_input(f"公司名稱", value=my_resume.get(f'exp_{i}_co',''), key=f'exp_{i}_co_in')
@@ -1573,11 +1636,26 @@ def _render_fill(user, my_resume, status, r_type):
             st.text_input("通勤方式", value=my_resume.get('commute_method',''), key='commute_method')
             st.text_input("通勤時間(分)", value=my_resume.get('commute_time',''), key='commute_time')
 
+        # 語言能力（最多 3 種）
+        with st.container(border=True):
+            st.caption("語言能力 (最多可填 3 種)")
+            for i in range(1, 4):
+                lc1, lc2 = st.columns(2)
+                _lv = str(my_resume.get(f'lang_{i}', '') or '')
+                _ll = str(my_resume.get(f'lang_{i}_level', '') or '')
+                st.session_state[f'lang_{i}'] = lc1.selectbox(
+                    f"語言 {i}", LANG_OPTS,
+                    index=LANG_OPTS.index(_lv) if _lv in LANG_OPTS else 0, key=f'lang_{i}_sel')
+                st.session_state[f'lang_{i}_level'] = lc2.selectbox(
+                    f"能力等級 {i}", LANG_LEVELS,
+                    index=LANG_LEVELS.index(_ll) if _ll in LANG_LEVELS else 0, key=f'lang_{i}_lv_sel')
+
         with st.container(border=True):
             st.caption("技能與自傳")
             skills = st.text_area("專業技能", value=my_resume['skills'], height=100, key='skills')
-            intro = st.text_area("自傳 / 工作成就", value=my_resume['self_intro'], height=150, key='self_intro')
-            st.text_area("您找工作最重視的 3 個條件為？（300 字內）",
+            intro = st.text_area("工作成就及個人之個性特質（優缺點），至少說明 3 項",
+                                 value=my_resume['self_intro'], height=150, key='self_intro')
+            st.text_area("您目前找工作最重視的 3 個條件及適任此職務的優勢（300 字內）",
                          value=my_resume.get('top3_conditions', ''),
                          height=100, max_chars=300, key='top3_conditions')
             try: st.image("qrcode.png", caption="追蹤職缺", width=100)
@@ -1613,34 +1691,25 @@ def _render_fill(user, my_resume, status, r_type):
         if c_d.form_submit_button("🚀 送出"):
             edu1_school = st.session_state.get('edu_1_school_in', '').strip()
             edu1_major  = st.session_state.get('edu_1_major_in',  '').strip()
-            edu1_start  = st.session_state.get('edu_1_start_in',  '').strip()
-            edu1_end    = st.session_state.get('edu_1_end_in',    '').strip()
-            height_val  = str(st.session_state.get('height', '')).strip()
-            weight_val  = str(st.session_state.get('weight', '')).strip()
+            edu1_start  = str(st.session_state.get('edu_1_start', '')).strip()   # 已改年/月選單
+            edu1_end    = str(st.session_state.get('edu_1_end',   '')).strip()
             n_en_val    = str(n_en).strip()
             addr_val    = str(addr).strip()
             def _yyyymm(s): return bool(re.match(r'^\d{4}/\d{1,2}$', s)) if s else False
-            def _num(s):
-                try: float(s); return True
-                except: return False
             if not str(n_cn).strip() or not str(phone).strip():
                 st.error("中文姓名與手機為必填")
             elif not addr_val:
                 st.error("通訊地址為必填")
             elif n_en_val and not re.match(r'^[A-Za-z\s]+$', n_en_val):
                 st.error("英文姓名只能包含英文字母及空格")
-            elif height_val and not _num(height_val):
-                st.error("身高請填寫數字")
-            elif weight_val and not _num(weight_val):
-                st.error("體重請填寫數字")
             elif not edu1_school:
                 st.error("⚠️ 學歷1：學校名稱為必填")
             elif not edu1_major:
                 st.error("⚠️ 學歷1：科系名稱為必填")
             elif not _yyyymm(edu1_start):
-                st.error("⚠️ 學歷1：入學年月格式須為 YYYY/MM（例如：2010/09）")
+                st.error("⚠️ 學歷1：請選擇入學年月（年、月都要選）")
             elif not _yyyymm(edu1_end):
-                st.error("⚠️ 學歷1：畢業年月格式須為 YYYY/MM（例如：2014/06）")
+                st.error("⚠️ 學歷1：請選擇畢/肄業年月（年、月都要選）")
             elif r_type == "Branch" and rot_val == "是" and "輪調" not in loc_val:
                 st.error("請至少勾選一個可配合輪調的分校")
             else:
