@@ -194,6 +194,9 @@ class PGBackend:
                   "zodiac", "interview_unit"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
+        for c, d in (("emp_id", "''"), ("unit", "''"), ("active", "'Y'")):   # 人員管理欄自癒(冪等)
+            try: self.exec(f'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT {d}')
+            except Exception: pass
         try:   # 到職文件表自癒(冪等)：檔案存 bytea，量小、免另建 GCS
             self.exec('''CREATE TABLE IF NOT EXISTS onboarding_docs (
                 id BIGSERIAL PRIMARY KEY, email TEXT NOT NULL, category TEXT NOT NULL,
@@ -363,7 +366,8 @@ class ResumeDB:
 
     def get_df(self, table_name):
         defaults = {
-            "users": ["email", "password", "name", "role", "creator_email", "created_at"],
+            "users": ["email", "password", "name", "role", "creator_email", "created_at",
+                      "emp_id", "unit", "active"],
             "resumes": [
                 "email", "status", "name_cn", "name_en", "phone", "address", "dob", 
                 "edu_1_school", "edu_1_major", "edu_1_degree", "edu_1_state", "edu_1_start", "edu_1_end",
@@ -419,7 +423,15 @@ class ResumeDB:
             creator_email = str(creator_email).strip()
             df = self.get_df("users")
             if not df.empty and email in df['email'].astype(str).values: return False, "Email 已存在"
-            self.ws_users.append_row([email, email, name, role, creator_email, str(date.today())])
+            # 依真實表頭按欄名放值（避免硬編碼位置放錯欄；新欄 active 預設 Y=在職）
+            _uh = [str(h).strip().lower() for h in self.ws_users.row_values(1)]
+            _urow = [""] * len(_uh)
+            for _c, _v in [("email", email), ("password", email), ("name", name), ("role", role),
+                           ("creator_email", creator_email), ("created_at", str(date.today())),
+                           ("active", "Y")]:
+                if _c in _uh:
+                    _urow[_uh.index(_c)] = _v
+            self.ws_users.append_row(_urow)
             if role == "candidate":
                 # 依真實表頭「按欄名」放值，避免硬編碼位置放錯欄
                 # (舊 bug：r_type 被放到 index 51=exp_4_co，而非 resume_type@61)
@@ -503,6 +515,49 @@ class ResumeDB:
             _invalidate_cache()
             return True, "OK"
         except Exception as e: return False, str(e)
+
+    def update_staff(self, email, name=None, emp_id=None, unit=None, password=None):
+        """人員管理：更新 PM/admin 基本資料（不改 email 本身，email 為主鍵）。"""
+        try:
+            cell = self.ws_users.find(str(email).strip(), in_column=1)
+            if not cell: return False, "查無此帳號"
+            headers = [h.strip().lower() for h in self.ws_users.row_values(1)]
+            updates = {}
+            for col, val in (("name", name), ("emp_id", emp_id), ("unit", unit), ("password", password)):
+                if val is not None and col in headers:
+                    updates[col] = str(val).strip()
+            if not updates: return False, "無可更新欄位"
+            self._apply_updates(self.ws_users, cell.row, headers, updates)
+            _invalidate_cache()
+            return True, "已更新"
+        except Exception as e: return False, str(e)
+
+    def resign_staff(self, email, successor_email):
+        """PM 離職：其經手的所有求職者改由接手 PM 承接，並標記離職。回傳 (ok, msg, 轉移筆數)。"""
+        try:
+            email = str(email).strip(); successor_email = str(successor_email).strip()
+            if not successor_email: return False, "必須指定接手 PM", 0
+            if email.lower() == successor_email.lower():
+                return False, "接手 PM 不可為離職者本人", 0
+            df = self.get_df("users")
+            headers = [h.strip().lower() for h in self.ws_users.row_values(1)]
+            if 'creator_email' not in headers:
+                return False, "users 表缺 creator_email 欄", 0
+            # 逐列把 creator_email 從離職者改為接手者
+            moved = 0
+            targets = df[df['creator_email'].astype(str).str.strip().str.lower() == email.lower()]
+            for _, r in targets.iterrows():
+                c = self.ws_users.find(str(r['email']).strip(), in_column=1)
+                if c:
+                    self._apply_updates(self.ws_users, c.row, headers, {"creator_email": successor_email})
+                    moved += 1
+            # 標記離職
+            cell = self.ws_users.find(email, in_column=1)
+            if cell and 'active' in headers:
+                self._apply_updates(self.ws_users, cell.row, headers, {"active": "N"})
+            _invalidate_cache()
+            return True, f"已將 {moved} 位求職者轉由接手 PM 承接，並標記離職", moved
+        except Exception as e: return False, str(e), 0
 
     def get_org_units(self, kind=None):
         """讀組織架構，回傳 list[dict]；kind 可為 HQ/Branch/Standalone。需 PG 後端。"""
@@ -1070,13 +1125,12 @@ def _build_invite_mail(name, email, link, unit=""):
 </div></body></html>"""
     return plain, html
 
-def _process_batch_invite(user, edited):
-    """批次邀請面試者：防呆檢查 → 逐筆建帳號＋寄信 → 顯示摘要。"""
+def _process_batch_invite(user, edited, tp):
+    """批次邀請面試者：防呆檢查 → 逐筆建帳號＋寄信 → 顯示摘要。tp=該批次的履歷類型。"""
     rows = []
     for _, r in edited.iterrows():
         nm = str(r.get("姓名", "")).strip()
         em = str(r.get("Email", "")).strip()
-        tp = str(r.get("履歷類型", _INVITE_TYPE_OPTS[0]))
         un = str(r.get("面試單位", "") or "").strip()
         if not nm and not em:
             continue  # 整列空白 → 略過
@@ -1135,7 +1189,7 @@ def admin_page():
     st.header(f"👨‍💼 管理後台")
 
     tabs = ["📧 發送邀請", "📋 履歷審核", "📊 表單管理", "📁 到職文件管理"]
-    if user['role'] == 'admin': tabs.append("⚙️ 設定")
+    if user['role'] == 'admin': tabs += ["⚙️ 設定", "👥 人員管理"]
     current_tab = st.tabs(tabs)
     
     with current_tab[0]:
@@ -1151,14 +1205,18 @@ def admin_page():
         if mode == "邀請面試者":
             st.write("#### 邀請面試者（表格式，一次最多 6 筆，批次發送）")
             st.caption("填妥各列的「姓名 / Email / 履歷類型」後，按下方按鈕一次批次發送並建立帳號。空白列會自動略過。")
-            _unit_opts = _org_options("HQ") + _org_options("Branch")
+            # 履歷類型放在表單「外面」→ 切換即時生效，面試單位選單直接鎖定為該類型的單位
+            _tp = st.radio("履歷類型", _INVITE_TYPE_OPTS, horizontal=True, key="invite_type")
+            _grp = "Branch" if "分公司" in _tp else "HQ"
+            _unit_opts = _org_options(_grp)
             if not _unit_opts:
-                st.warning("尚未設定公司組織單位，請先至「⚙️ 設定 → 公司組織維護」建立後再發送邀請。")
+                st.warning("此類型尚未設定組織單位，請先至「⚙️ 設定 → 公司組織維護」建立後再發送邀請。")
+            st.caption(f"目前選單已鎖定為 **{_tp}** 的單位（共 {len(_unit_opts)} 個）。"
+                       f"同一批次為同一種履歷類型；要發另一種請切換上方選項。")
             _blank = pd.DataFrame(
-                [{"姓名": "", "Email": "", "履歷類型": _INVITE_TYPE_OPTS[0], "面試單位": None}
-                 for _ in range(6)]
+                [{"姓名": "", "Email": "", "面試單位": None} for _ in range(6)]
             )
-            with st.form("invite_batch"):
+            with st.form(f"invite_batch_{_grp}"):
                 edited = st.data_editor(
                     _blank,
                     num_rows="fixed",
@@ -1167,17 +1225,14 @@ def admin_page():
                     column_config={
                         "姓名": st.column_config.TextColumn("姓名"),
                         "Email": st.column_config.TextColumn("Email"),
-                        "履歷類型": st.column_config.SelectboxColumn(
-                            "履歷類型", options=_INVITE_TYPE_OPTS,
-                            required=True, default=_INVITE_TYPE_OPTS[0]),
                         "面試單位": st.column_config.SelectboxColumn(
                             "面試單位", options=_unit_opts,
-                            help="總公司類型請選總公司單位；分公司類型請選『區域 / 分公司』"),
+                            help="僅顯示目前所選履歷類型的單位"),
                     },
-                    key="invite_editor",
+                    key=f"invite_editor_{_grp}",
                 )
                 if st.form_submit_button("發送面試邀請"):
-                    _process_batch_invite(user, edited)
+                    _process_batch_invite(user, edited, _tp)
         else:
             # 建立人資 PM（僅 admin）
             with st.form("create_pm"):
@@ -1589,6 +1644,102 @@ def admin_page():
                 st.success("OK"); st.rerun()
             st.divider()
             _render_org_admin()
+
+        with current_tab[5]:
+            _render_staff_admin(user)
+
+def _render_staff_admin(user):
+    """admin：人員管理 — 維護 PM/admin 資料、PM 離職與交接。"""
+    st.subheader("👥 人員管理")
+    df_u = load_df("users")
+    if df_u.empty:
+        st.info("尚無帳號資料"); return
+    staff = df_u[df_u['role'].isin(['admin', 'pm'])].copy()
+    if 'active' not in staff.columns: staff['active'] = 'Y'
+    staff['active'] = staff['active'].fillna('Y').replace('', 'Y')
+
+    _units = ["", *_org_options("HQ"), *_org_options("Branch")]
+    _alive_pms = [str(r['email']).strip() for _, r in staff.iterrows()
+                  if r['role'] == 'pm' and str(r.get('active', 'Y')).strip().upper() != 'N']
+
+    st.caption("修改姓名 / 員工編號 / 單位 / 密碼後按該列「儲存」。**員工編號**為串接管理系統待辦通知的識別 ID。")
+
+    # 離職交接完成摘要
+    _rs = st.session_state.get('resign_summary')
+    if _rs:
+        _ok, _msg, _moved, _nm, _em, _suc = _rs
+        if _ok:
+            st.success(f"✅ 離職交接完成：{_nm}（{_em}）已標記離職，"
+                       f"其經手的 {_moved} 位求職者已全數轉由 {_suc} 承接。")
+        else:
+            st.error(f"❌ 離職交接失敗：{_msg}")
+        if st.button("關閉摘要", key="close_resign_summary"):
+            del st.session_state['resign_summary']; st.rerun()
+    for _, r in staff.iterrows():
+        em = str(r['email']).strip()
+        is_admin = str(r['role']).strip() == 'admin'
+        resigned = str(r.get('active', 'Y')).strip().upper() == 'N'
+        _tag = "👑 admin" if is_admin else "🧑‍💼 PM"
+        _st = "🔴 已離職" if resigned else "🟢 在職"
+        with st.expander(f"{_tag}　{r.get('name','')}（{em}）　{_st}", expanded=False):
+            c1, c2, c3 = st.columns(3)
+            _nm = c1.text_input("姓名", value=str(r.get('name', '') or ''), key=f"sf_nm_{em}")
+            _eid = c2.text_input("員工編號", value=str(r.get('emp_id', '') or ''), key=f"sf_eid_{em}",
+                                 help="管理系統待辦通知 API 的 UserId，需為數字")
+            _cur_unit = str(r.get('unit', '') or '')
+            _uidx = _units.index(_cur_unit) if _cur_unit in _units else 0
+            _un = c3.selectbox("單位", _units, index=_uidx, key=f"sf_un_{em}")
+            c4, c5 = st.columns(2)
+            _pw = c4.text_input("重設密碼（留空=不變更）", type="password", key=f"sf_pw_{em}")
+            c5.text_input("Email（帳號，不可修改）", value=em, disabled=True, key=f"sf_em_{em}")
+
+            if st.button("💾 儲存", key=f"sf_save_{em}"):
+                if _eid and not str(_eid).strip().isdigit():
+                    st.error("員工編號需為數字")
+                else:
+                    ok, msg = sys.update_staff(em, name=_nm, emp_id=_eid, unit=_un,
+                                               password=(_pw if _pw else None))
+                    if ok: st.success(msg); time.sleep(1); st.rerun()
+                    else:  st.error(f"儲存失敗：{msg}")
+
+            # 離職：僅 PM 且在職者可操作；admin 無離職設定、不可刪除
+            if is_admin:
+                st.caption("ℹ️ admin 帳號可修改資料，但**不提供離職設定、不可刪除**。")
+            elif resigned:
+                st.caption("此 PM 已標記離職。")
+            else:
+                st.divider()
+                _cand = [p for p in _alive_pms if p.lower() != em.lower()]
+                if not _cand:
+                    st.warning("目前沒有其他在職 PM 可接手，無法執行離職。")
+                else:
+                    _suc = st.selectbox("指定接手 PM（必選）", _cand, key=f"sf_suc_{em}")
+                    if st.button("🚪 設定離職並交接", key=f"sf_res_{em}"):
+                        st.session_state['pending_resign'] = (em, str(r.get('name', '')), _suc)
+                        st.rerun()
+
+    _pr = st.session_state.get('pending_resign')
+    if _pr:
+        _confirm_resign_dialog(*_pr)
+
+@st.dialog("確認離職交接")
+def _confirm_resign_dialog(em, nm, suc):
+    df_u = load_df("users")
+    _n = 0
+    if not df_u.empty and 'creator_email' in df_u.columns:
+        _n = int((df_u['creator_email'].astype(str).str.strip().str.lower() == em.lower()).sum())
+    st.warning(f"即將把 **{nm}（{em}）** 標記為離職。")
+    st.write(f"其經手的 **{_n}** 位求職者，將全數轉由 **{suc}** 承接。")
+    st.caption("此操作會直接修改資料庫，請確認無誤。")
+    c1, c2 = st.columns(2)
+    if c1.button("✅ 確認執行", use_container_width=True):
+        ok, msg, moved = sys.resign_staff(em, suc)
+        st.session_state.pop('pending_resign', None)
+        st.session_state['resign_summary'] = (ok, msg, moved, nm, em, suc)
+        st.rerun()
+    if c2.button("取消", use_container_width=True):
+        st.session_state.pop('pending_resign', None)
+        st.rerun()
 
 def _render_org_admin():
     """admin：公司組織架構維護（總公司 3 層 / 分公司 3 層 / 獨立單位）。"""
