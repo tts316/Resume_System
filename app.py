@@ -753,6 +753,27 @@ class ResumeDB:
             return True
         except: return False
 
+    def get_setting(self, key):
+        """讀 system_settings 單一設定值(字串)；無則 None。"""
+        try:
+            cell = self.ws_settings.find(str(key), in_column=1)
+            if cell:
+                return self.ws_settings.cell(cell.row, 2).value
+        except Exception:
+            pass
+        return None
+
+    def set_setting(self, key, value):
+        """寫 system_settings 單一設定值(存在則更新，否則新增)。"""
+        try:
+            cell = self.ws_settings.find(str(key), in_column=1)
+            if cell: self.ws_settings.update_cell(cell.row, 2, str(value))
+            else: self.ws_settings.append_row([str(key), str(value)])
+            _invalidate_cache()
+            return True
+        except Exception:
+            return False
+
 @st.cache_resource
 def get_db(): return ResumeDB()
 
@@ -799,17 +820,17 @@ def _ai_analyze_resume(row):
         return None, str(e)
 
 # --- 聯成電腦管理系統「待辦通知」API 串接 ---
-# Token 不落地：一律讀環境變數 TODO_API_TOKEN（未設 → 整個功能靜默略過，不影響其他流程）
-TODO_API_BASE = "https://lccnet-api2023-api.azurewebsites.net"
+# URL 與 Token 存 PG(system_settings)，由 admin 於「設定」維護；任一缺 → 該動作靜默略過。
+# 設定鍵：todo_create_url / todo_create_token（發送）、todo_cancel_url / todo_cancel_token（取消）
+TODO_SETTING_KEYS = ("todo_create_url", "todo_create_token", "todo_cancel_url", "todo_cancel_token")
 
-def _todo_api_post(path, payload):
-    token = os.environ.get("TODO_API_TOKEN", "").strip()
-    if not token:
+def _todo_api_post(url, token, payload):
+    url = str(url or "").strip(); token = str(token or "").strip()
+    if not url or not token:
         return None
     try:
         req = urllib.request.Request(
-            TODO_API_BASE + path, data=json.dumps(payload).encode("utf-8"),
-            method="POST",
+            url, data=json.dumps(payload).encode("utf-8"), method="POST",
             headers={"Content-type": "application/json", "Authorization": f"Bearer {token}"})
         with urllib.request.urlopen(req, timeout=8) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -867,11 +888,14 @@ def _todo_notify(cand_email, pm_email, event, desc):
     pm_email = str(pm_email or "").strip()
     if not pm_email or '@' not in pm_email:
         return
+    url = sys.get_setting("todo_create_url"); token = sys.get_setting("todo_create_token")
+    if not str(url or "").strip() or not str(token or "").strip():
+        return
     eid = _emp_id_of(pm_email)
     if not eid:
         return
     _todo_cancel(cand_email, event)   # 先清同事件舊待辦，避免重複
-    r = _todo_api_post("/api/v1/Todo",
+    r = _todo_api_post(url, token,
                        {"UserId": int(eid), "Desc": str(desc)[:60], "Type": 2,
                         "Link": _login_link(pm_email)})
     if r and r.get("Success") and r.get("TodoId"):
@@ -879,9 +903,12 @@ def _todo_notify(cand_email, pm_email, event, desc):
 
 def _todo_cancel(cand_email, event):
     """取消 (求職者,事件) 對應的待辦（呼叫管理系統 Cancel API 並清對照）。"""
+    url = sys.get_setting("todo_cancel_url"); token = sys.get_setting("todo_cancel_token")
+    if not str(url or "").strip() or not str(token or "").strip():
+        return   # 未設定取消 API → 不動對照，避免遺失 TodoId
     tid = sys.todo_ref_pop(cand_email, event)
     if tid:
-        _todo_api_post("/api/v1/Todo/Cancel", {"TodoId": int(tid)})
+        _todo_api_post(url, token, {"TodoId": int(tid)})
 
 # --- Email ---
 def send_email(to_email, subject, body, html_body=None):
@@ -1783,9 +1810,40 @@ def admin_page():
                 st.success("OK"); st.rerun()
             st.divider()
             _render_org_admin()
+            st.divider()
+            _render_todo_admin()
 
         with current_tab[5]:
             _render_staff_admin(user)
+
+def _render_todo_admin():
+    """admin：待辦通知 API 維護（URL + Token 存 system_settings）。"""
+    st.subheader("🔔 待辦通知 API 設定")
+    if sys._pg() is None:
+        st.error("此功能需 PostgreSQL 後端。"); return
+    st.caption("聯成電腦管理系統待辦 API。**Token 欄留空＝維持原設定不變更**；"
+               "URL 直接編輯即可。四項都設定後，待辦通知才會實際發送。")
+    _curl = str(sys.get_setting("todo_create_url") or "")
+    _xurl = str(sys.get_setting("todo_cancel_url") or "")
+    _ctok_set = bool(str(sys.get_setting("todo_create_token") or "").strip())
+    _xtok_set = bool(str(sys.get_setting("todo_cancel_token") or "").strip())
+    with st.form("todo_api_form"):
+        st.markdown("**① 發送待辦**")
+        curl = st.text_input("發送 API URL", value=_curl,
+                             placeholder="https://lccnet-api2023-api.azurewebsites.net/api/v1/Todo")
+        st.caption(f"目前發送 Token：{'🟢 已設定' if _ctok_set else '🔴 未設定'}")
+        ctok = st.text_input("發送 Token（留空＝不變更）", type="password", key="todo_ctok")
+        st.markdown("**② 取消待辦**")
+        xurl = st.text_input("取消 API URL", value=_xurl,
+                             placeholder="https://lccnet-api2023-api.azurewebsites.net/api/v1/Todo/Cancel")
+        st.caption(f"目前取消 Token：{'🟢 已設定' if _xtok_set else '🔴 未設定'}")
+        xtok = st.text_input("取消 Token（留空＝不變更）", type="password", key="todo_xtok")
+        if st.form_submit_button("💾 儲存待辦 API 設定"):
+            sys.set_setting("todo_create_url", curl.strip())
+            sys.set_setting("todo_cancel_url", xurl.strip())
+            if ctok.strip(): sys.set_setting("todo_create_token", ctok.strip())
+            if xtok.strip(): sys.set_setting("todo_cancel_token", xtok.strip())
+            st.success("已儲存待辦 API 設定"); time.sleep(1); st.rerun()
 
 def _render_staff_admin(user):
     """admin：人員管理 — 維護 PM/admin 資料、PM 離職與交接。"""
