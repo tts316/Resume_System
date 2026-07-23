@@ -1661,6 +1661,12 @@ def _render_staff_admin(user):
     _units = ["", *_org_options("HQ"), *_org_options("Branch")]
     _alive_pms = [str(r['email']).strip() for _, r in staff.iterrows()
                   if r['role'] == 'pm' and str(r.get('active', 'Y')).strip().upper() != 'N']
+    # email → 顯示名稱（供接手 PM 選單顯示「姓名（email）」方便辨識）
+    _name_by_email = {str(r['email']).strip(): str(r.get('name', '') or '').strip()
+                      for _, r in staff.iterrows()}
+    def _pm_label(e):
+        nm = _name_by_email.get(e, '')
+        return f"{nm}（{e}）" if nm else e
 
     st.caption("修改姓名 / 員工編號 / 單位 / 密碼後按該列「儲存」。**員工編號**為串接管理系統待辦通知的識別 ID。")
 
@@ -1713,9 +1719,10 @@ def _render_staff_admin(user):
                 if not _cand:
                     st.warning("目前沒有其他在職 PM 可接手，無法執行離職。")
                 else:
-                    _suc = st.selectbox("指定接手 PM（必選）", _cand, key=f"sf_suc_{em}")
+                    _suc = st.selectbox("指定接手 PM（必選）", _cand,
+                                        format_func=_pm_label, key=f"sf_suc_{em}")
                     if st.button("🚪 設定離職並交接", key=f"sf_res_{em}"):
-                        st.session_state['pending_resign'] = (em, str(r.get('name', '')), _suc)
+                        st.session_state['pending_resign'] = (em, str(r.get('name', '')), _suc, _pm_label(_suc))
                         st.rerun()
 
     _pr = st.session_state.get('pending_resign')
@@ -1723,19 +1730,19 @@ def _render_staff_admin(user):
         _confirm_resign_dialog(*_pr)
 
 @st.dialog("確認離職交接")
-def _confirm_resign_dialog(em, nm, suc):
+def _confirm_resign_dialog(em, nm, suc, suc_label=None):
     df_u = load_df("users")
     _n = 0
     if not df_u.empty and 'creator_email' in df_u.columns:
         _n = int((df_u['creator_email'].astype(str).str.strip().str.lower() == em.lower()).sum())
     st.warning(f"即將把 **{nm}（{em}）** 標記為離職。")
-    st.write(f"其經手的 **{_n}** 位求職者，將全數轉由 **{suc}** 承接。")
+    st.write(f"其經手的 **{_n}** 位求職者，將全數轉由 **{suc_label or suc}** 承接。")
     st.caption("此操作會直接修改資料庫，請確認無誤。")
     c1, c2 = st.columns(2)
     if c1.button("✅ 確認執行", use_container_width=True):
         ok, msg, moved = sys.resign_staff(em, suc)
         st.session_state.pop('pending_resign', None)
-        st.session_state['resign_summary'] = (ok, msg, moved, nm, em, suc)
+        st.session_state['resign_summary'] = (ok, msg, moved, nm, em, suc_label or suc)
         st.rerun()
     if c2.button("取消", use_container_width=True):
         st.session_state.pop('pending_resign', None)
