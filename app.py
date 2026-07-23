@@ -128,12 +128,19 @@ BRANCH_DATA = {
 }
 
 # 到職文件設定：(類別鍵, 顯示名稱, 份數上限)
+# (key, 顯示名稱, 每類上限, 是否必要)。前三項為必要上傳文件。
 DOC_CATEGORIES = [
-    ("id_card", "身分證影本（正反面）", 2),
-    ("edu",     "學歷證明",            3),
-    ("other",   "其他證明文件",        3),
+    ("jobbank",   "人力銀行履歷",   3, True),
+    ("id_card",   "身分證正反面",   3, True),
+    ("edu_cert",  "最高學歷證書",   3, True),
+    ("hw_front",  "手寫履歷正面",   3, False),
+    ("hw_back",   "手寫履歷反面",   3, False),
+    ("police",    "良民證",         3, False),
+    ("labor_ins", "勞保明細",       3, False),
+    ("discharge", "退伍令",         3, False),
 ]
-DOC_CAT_LABEL = {k: lbl for k, lbl, _ in DOC_CATEGORIES}
+DOC_CAT_LABEL = {k: lbl for k, lbl, *_ in DOC_CATEGORIES}
+DOC_REQUIRED = [(k, lbl) for k, lbl, _mx, req in DOC_CATEGORIES if req]
 ALLOWED_DOC_EXT = ["pdf", "jpg", "jpeg", "doc"]
 MAX_DOC_MB = 5
 
@@ -194,7 +201,7 @@ class PGBackend:
             except Exception: pass
         for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
                   "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level",
-                  "zodiac", "interview_unit"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位欄自癒(冪等)
+                  "zodiac", "interview_unit", "mgmt_cand_no"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位/管理系統求職者編號欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
         for c, d in (("emp_id", "''"), ("unit", "''"), ("active", "'Y'")):   # 人員管理欄自癒(冪等)
@@ -396,7 +403,7 @@ class ResumeDB:
                 "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes",
                 "signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
                 "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level", "zodiac",
-                "interview_unit"
+                "interview_unit", "mgmt_cand_no"
             ],
             "system_settings": ["key", "value"]
         }
@@ -900,6 +907,29 @@ def _todo_notify(cand_email, pm_email, event, desc):
                         "Link": _login_link(pm_email)})
     if r and r.get("Success") and r.get("TodoId"):
         sys.todo_ref_set(cand_email, event, int(r["TodoId"]), pm_email)
+
+def _mgmt_import(cand_email, cand_no):
+    """將人員資料與到職文件匯入聯成電腦管理系統，以「求職者編號」為識別 id。
+
+    ⚠️ 接口預留：管理系統匯入 API 技術文件尚未提供，目前僅儲存求職者編號。
+    待文件補上後，於此組裝 payload 並呼叫 API（建議 URL/Token 存 system_settings：
+    mgmt_import_url / mgmt_import_token，比照待辦 API 作法；文件與影像用 docs 逐一上傳）：
+
+        url   = sys.get_setting("mgmt_import_url")
+        token = sys.get_setting("mgmt_import_token")
+        row   = load_df("resumes") 取該 cand_email 的整列人員資料
+        docs  = sys.docs_list(cand_email)          # 逐一取 _cached_doc(id)['data'] 上傳
+        payload = { "CandNo": cand_no, ...人員資料..., ...文件... }
+        r = _todo_api_post(url, token, payload)    # 或改用專用 client
+    """
+    cand_no = str(cand_no).strip()
+    sys._update_resume_fields(cand_email, {"mgmt_cand_no": cand_no})
+    _invalidate_cache()
+    url = sys.get_setting("mgmt_import_url"); token = sys.get_setting("mgmt_import_token")
+    if not str(url or "").strip() or not str(token or "").strip():
+        return True, f"已儲存求職者編號 {cand_no}；管理系統匯入 API 尚未設定（接口已預留，待技術文件補上後啟用）"
+    # TODO：技術文件補上後於此組裝 payload 並呼叫 API
+    return True, f"已儲存求職者編號 {cand_no}；匯入 API 接口已預留，待 payload 規格確認後啟用"
 
 def _todo_cancel(cand_email, event):
     """取消 (求職者,事件) 對應的待辦（呼叫管理系統 Cancel API 並清對照）。"""
@@ -1622,7 +1652,7 @@ def admin_page():
             else:
                 if not df_r2.empty:
                     # 用 signed_at(短字串)判斷是否已簽名，不撈 signature(base64 大字串)以免拖慢
-                    r_cols = [c for c in ['email','status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled','signed_at'] if c in df_r2.columns]
+                    r_cols = [c for c in ['email','status','name_cn','interview_dept','resume_type','hr_comment','docs_enabled','signed_at','mgmt_cand_no'] if c in df_r2.columns]
                     merged2 = cands.merge(df_r2[r_cols], on='email', how='left')
                 else:
                     merged2 = cands.copy()
@@ -1750,6 +1780,18 @@ def admin_page():
                                     ok, _ = send_email(cand_email, "【聯成電腦】提醒您上傳到職文件", body)
                                     if ok: st.toast(f"已發送上傳提醒給 {cand_name}", icon="✅")
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
+                                # 匯入管理系統：僅在「已開放到職文件」時出現求職者編號輸入框 + 按鈕
+                                if _den:
+                                    _cur_no = str(fr.get('mgmt_cand_no', '') or '')
+                                    _no = rc[5].text_input("求職者編號（管理系統查詢）", value=_cur_no,
+                                                           key=f"mgmtno_{cand_email}_{_row_idx}",
+                                                           placeholder="輸入管理系統的求職者編號")
+                                    if rc[5].button("📥 匯入管理系統", key=f"mgmtimp_{cand_email}_{_row_idx}"):
+                                        if not str(_no).strip():
+                                            st.toast("請先輸入求職者編號", icon="⚠️")
+                                        else:
+                                            _ok, _msg = _mgmt_import(cand_email, _no)
+                                            st.toast(_msg, icon="✅" if _ok else "⚠️")
                             else:
                                 rc[5].write("—")
 
@@ -2408,15 +2450,17 @@ def _render_docs(user, my_resume, status):
         st.error("此功能需 PostgreSQL 後端。")
         return
 
-    st.caption(f"可上傳格式：PDF / JPG / DOC，單檔上限 {MAX_DOC_MB}MB。上傳錯誤可刪除後重傳。")
+    st.caption(f"可上傳格式：PDF / JPG / DOC，單檔上限 {MAX_DOC_MB}MB。上傳錯誤可刪除後重傳。"
+               f"標示 :red[*] 者為**必要文件**。")
     docs = sys.docs_list(email)
     by_cat = {}
     for d in docs:
         by_cat.setdefault(d['category'], []).append(d)
 
-    for cat_key, cat_label, cat_max in DOC_CATEGORIES:
+    for cat_key, cat_label, cat_max, req in DOC_CATEGORIES:
+        _star = " :red[*]" if req else ""
+        st.markdown(f"**{cat_label}**{_star}（{len(by_cat.get(cat_key, []))}/{cat_max}）")
         existing = by_cat.get(cat_key, [])
-        st.markdown(f"**{cat_label}**（{len(existing)}/{cat_max}）")
         for d in existing:
             cc = st.columns([5, 1, 1])
             cc[0].write(f"📄 {d['filename']}　·　{d['uploaded_at']}")
@@ -2447,9 +2491,15 @@ def _render_docs(user, my_resume, status):
     submitted = str(my_resume.get('docs_submitted_at', '')).strip()
     if submitted:
         st.success(f"✅ 已於 {submitted} 送出並通知人資。您仍可繼續補傳、下載或刪除文件。")
+    # 送出前檢核必要文件（前三項）是否齊全
+    _missing_req = [lbl for k, lbl in DOC_REQUIRED if not by_cat.get(k)]
+    if _missing_req:
+        st.warning("⚠️ 尚缺**必要文件**：" + "、".join(_missing_req) + "。請完整上傳後再送出。")
     if st.button("🚀 送出（通知人資 PM）", type="primary"):
         if not docs:
             st.warning("尚未上傳任何文件，無法送出。")
+        elif _missing_req:
+            st.error("必要文件尚未齊全，無法送出：" + "、".join(_missing_req))
         else:
             sys.mark_docs_submitted(email)
             pm = user.get('creator', '')
