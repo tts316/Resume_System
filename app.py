@@ -129,19 +129,18 @@ BRANCH_DATA = {
 
 # 到職文件設定：(類別鍵, 顯示名稱, 份數上限)
 # (key, 顯示名稱, 每類上限, 是否必要)。前三項為必要上傳文件。
+# 手寫履歷 = 系統內的簽名履歷，不需另外上傳（於到職文件頁直接提供查閱）。
 DOC_CATEGORIES = [
     ("jobbank",   "人力銀行履歷",   3, True),
     ("id_card",   "身分證正反面",   3, True),
     ("edu_cert",  "最高學歷證書",   3, True),
-    ("hw_front",  "手寫履歷正面",   3, False),
-    ("hw_back",   "手寫履歷反面",   3, False),
     ("police",    "良民證",         3, False),
     ("labor_ins", "勞保明細",       3, False),
     ("discharge", "退伍令",         3, False),
 ]
 DOC_CAT_LABEL = {k: lbl for k, lbl, *_ in DOC_CATEGORIES}
 DOC_REQUIRED = [(k, lbl) for k, lbl, _mx, req in DOC_CATEGORIES if req]
-ALLOWED_DOC_EXT = ["pdf", "jpg", "jpeg", "doc"]
+ALLOWED_DOC_EXT = ["pdf", "jpg", "jpeg", "png", "doc"]
 MAX_DOC_MB = 5
 
 # --- 機密設定讀取：雲端(Cloud Run)優先讀環境變數，本機/Streamlit Cloud fallback 讀 secrets.toml ---
@@ -2438,64 +2437,93 @@ def _render_confirm(user, my_resume, status):
 def _render_docs(user, my_resume, status):
     """求職者：到職文件上傳/查閱（僅 面試通過 且 PM 已開啟 才開放）。"""
     email = str(user['email']).strip()
-    st.subheader("📎 到職文件上傳 / 查閱")
+    st.subheader("📎 到職文件")
     enabled = str(my_resume.get('docs_enabled', '')).strip().upper() == 'Y'
     if status != "Approved":
-        st.info("履歷經人資審核**通過**後，此功能才會開放。")
+        st.info("ℹ️ 履歷經人資審核**通過**後，此功能才會開放。")
         return
     if not enabled:
-        st.info("此功能將於人資（PM）為您**開啟**後提供，請稍候或洽詢人資部。")
+        st.info("ℹ️ 此功能將於人資（PM）為您**開啟**後提供，請稍候或洽詢人資部。")
         return
     if sys._pg() is None:
         st.error("此功能需 PostgreSQL 後端。")
         return
 
-    st.caption(f"可上傳格式：PDF / JPG / DOC，單檔上限 {MAX_DOC_MB}MB。上傳錯誤可刪除後重傳。"
-               f"標示 :red[*] 者為**必要文件**。")
+    # ── 簽名履歷（手寫履歷）：直接查閱系統內的簽名版履歷，不需另外上傳 ──
+    with st.container(border=True):
+        st.markdown("##### ✍️ 簽名履歷")
+        if str(my_resume.get('signed_at', '') or '').strip():
+            st.caption(f"您已於 {my_resume.get('signed_at')} 完成簽名，以下為含簽名的履歷。")
+            try:
+                _pdf = _cached_pdf_bytes(tuple(my_resume.items()))
+                st.download_button("📄 查閱 / 下載簽名履歷", _pdf,
+                                   f"{my_resume.get('name_cn','履歷')}_簽名履歷.pdf",
+                                   "application/pdf", key="dl_signed_resume")
+            except Exception as e:
+                st.error(f"履歷產生失敗：{e}")
+        else:
+            st.warning("⚠️ 您**尚未完成履歷簽名**。手寫履歷即為系統內的簽名履歷，"
+                       "請先至「🖋️ 履歷查詢/確認」分頁完成簽名，簽名後即可於此查閱。")
+
     docs = sys.docs_list(email)
     by_cat = {}
     for d in docs:
         by_cat.setdefault(d['category'], []).append(d)
 
-    for cat_key, cat_label, cat_max, req in DOC_CATEGORIES:
-        _star = " :red[*]" if req else ""
-        st.markdown(f"**{cat_label}**{_star}（{len(by_cat.get(cat_key, []))}/{cat_max}）")
-        existing = by_cat.get(cat_key, [])
-        for d in existing:
-            cc = st.columns([5, 1, 1])
-            cc[0].write(f"📄 {d['filename']}　·　{d['uploaded_at']}")
-            if st.session_state.get(f"want_doc_{d['id']}"):
-                doc = _cached_doc(d['id'])
-                if doc:
-                    cc[1].download_button("下載", doc['data'], d['filename'],
-                                          doc['mime'] or "application/octet-stream", key=f"dl_doc_{d['id']}")
-            elif cc[1].button("調閱", key=f"prep_doc_{d['id']}"):
-                st.session_state[f"want_doc_{d['id']}"] = True; st.rerun()
-            if cc[2].button("刪除", key=f"del_doc_{d['id']}"):
-                sys.docs_delete(d['id']); _cached_doc.clear()
-                st.toast("已刪除", icon="🗑️"); st.rerun()
-        if len(existing) < cat_max:
-            up = st.file_uploader(f"新增{cat_label}", type=ALLOWED_DOC_EXT,
-                                  key=f"up_{cat_key}", label_visibility="collapsed")
-            if up is not None:
-                data = up.getvalue()
-                if len(data) > MAX_DOC_MB * 1024 * 1024:
-                    st.error(f"「{up.name}」超過 {MAX_DOC_MB}MB，請壓縮後再上傳。")
-                elif st.button(f"⬆️ 上傳至「{cat_label}」", key=f"btn_up_{cat_key}"):
-                    slot = max([d['slot'] for d in existing], default=0) + 1
-                    ok, msg = sys.docs_add(email, cat_key, slot, up.name, up.type or "", data)
-                    if ok: st.toast("已上傳", icon="✅"); st.rerun()
-                    else:  st.error(f"上傳失敗：{msg}")
-        st.divider()
+    # ── 上傳進度 ──
+    _req_done = sum(1 for k, _ in DOC_REQUIRED if by_cat.get(k))
+    _req_total = len(DOC_REQUIRED)
+    st.markdown("##### 📤 文件上傳")
+    pc1, pc2 = st.columns([3, 2])
+    pc1.progress(_req_done / _req_total if _req_total else 1.0)
+    pc2.caption(f"必要文件 {_req_done}/{_req_total} 完成　·　共上傳 {len(docs)} 份")
+    st.caption(f"可上傳格式：PDF / JPG / PNG / DOC，單檔上限 {MAX_DOC_MB}MB。"
+               f"標示 :red[＊] 者為**必要文件**，未齊全無法送出。")
 
+    for cat_key, cat_label, cat_max, req in DOC_CATEGORIES:
+        existing = by_cat.get(cat_key, [])
+        _badge = "✅" if existing else ("🔴" if req else "⬜")
+        _star = " :red[＊]" if req else ""
+        with st.container(border=True):
+            st.markdown(f"{_badge} **{cat_label}**{_star}　:gray[（{len(existing)}/{cat_max}）]")
+            for d in existing:
+                cc = st.columns([6, 1.2, 1.2])
+                cc[0].write(f"📄 {d['filename']}")
+                cc[0].caption(str(d['uploaded_at']))
+                if st.session_state.get(f"want_doc_{d['id']}"):
+                    doc = _cached_doc(d['id'])
+                    if doc:
+                        cc[1].download_button("下載", doc['data'], d['filename'],
+                                              doc['mime'] or "application/octet-stream", key=f"dl_doc_{d['id']}")
+                elif cc[1].button("調閱", key=f"prep_doc_{d['id']}"):
+                    st.session_state[f"want_doc_{d['id']}"] = True; st.rerun()
+                if cc[2].button("刪除", key=f"del_doc_{d['id']}"):
+                    sys.docs_delete(d['id']); _cached_doc.clear()
+                    st.toast("已刪除", icon="🗑️"); st.rerun()
+            if len(existing) < cat_max:
+                up = st.file_uploader(f"新增{cat_label}", type=ALLOWED_DOC_EXT,
+                                      key=f"up_{cat_key}", label_visibility="collapsed")
+                if up is not None:
+                    data = up.getvalue()
+                    if len(data) > MAX_DOC_MB * 1024 * 1024:
+                        st.error(f"「{up.name}」超過 {MAX_DOC_MB}MB，請壓縮後再上傳。")
+                    elif st.button(f"⬆️ 上傳至「{cat_label}」", key=f"btn_up_{cat_key}"):
+                        slot = max([d['slot'] for d in existing], default=0) + 1
+                        ok, msg = sys.docs_add(email, cat_key, slot, up.name, up.type or "", data)
+                        if ok: st.toast("已上傳", icon="✅"); st.rerun()
+                        else:  st.error(f"上傳失敗：{msg}")
+            else:
+                st.caption("已達上限，如需更換請先刪除。")
+
+    st.divider()
     submitted = str(my_resume.get('docs_submitted_at', '')).strip()
     if submitted:
         st.success(f"✅ 已於 {submitted} 送出並通知人資。您仍可繼續補傳、下載或刪除文件。")
-    # 送出前檢核必要文件（前三項）是否齊全
+    # 送出前檢核必要文件是否齊全
     _missing_req = [lbl for k, lbl in DOC_REQUIRED if not by_cat.get(k)]
     if _missing_req:
         st.warning("⚠️ 尚缺**必要文件**：" + "、".join(_missing_req) + "。請完整上傳後再送出。")
-    if st.button("🚀 送出（通知人資 PM）", type="primary"):
+    if st.button("🚀 送出（通知人資 PM）", type="primary", use_container_width=True):
         if not docs:
             st.warning("尚未上傳任何文件，無法送出。")
         elif _missing_req:
@@ -2540,8 +2568,11 @@ def _render_docs_admin(user):
         enabled = str(r.get('docs_enabled', '')).strip().upper() == 'Y'
         submitted = str(r.get('docs_submitted_at', '')).strip()
         docs = sys.docs_list(em)
-        head = (f"{'🟢開放' if enabled else '⚪未開放'}　{nm}（{em}）"
-                f"　·　已上傳 {len(docs)} 份" + (f"　·　送出 {submitted}" if submitted else ""))
+        _cats = {d['category'] for d in docs}
+        _req_done = sum(1 for k, _ in DOC_REQUIRED if k in _cats)
+        _req_badge = "✅必要齊全" if _req_done == len(DOC_REQUIRED) else f"⚠️必要 {_req_done}/{len(DOC_REQUIRED)}"
+        head = (f"{'🟢開放' if enabled else '⚪未開放'}　{nm}（{em}）　·　{_req_badge}"
+                f"　·　共 {len(docs)} 份" + (f"　·　送出 {submitted}" if submitted else ""))
         with st.expander(head):
             if not enabled:
                 st.caption("⚠️ 尚未於『表單管理』開啟此求職者的到職文件上傳。")
