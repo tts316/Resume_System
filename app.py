@@ -1,8 +1,11 @@
 ﻿import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import time
 import base64
+import hmac
+import hashlib
+import urllib.request
 import smtplib
 import io
 import os
@@ -234,6 +237,14 @@ class PGBackend:
                 for i, (k, a, b, c) in enumerate(seed):
                     self.exec('INSERT INTO org_units (kind,l1,l2,l3,sort_order) VALUES (%s,%s,%s,%s,%s)',
                               (k, a, b, c, i))
+        except Exception: pass
+        try:
+            # 待辦通知對照：記 (求職者, 事件) → 管理系統回傳的 TodoId，供日後取消
+            self.exec('''CREATE TABLE IF NOT EXISTS todo_refs (
+                cand_email TEXT NOT NULL, event TEXT NOT NULL,
+                todo_id BIGINT NOT NULL, pm_email TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (cand_email, event))''')
         except Exception: pass
 
     def _connect(self):
@@ -516,6 +527,47 @@ class ResumeDB:
             return True, "OK"
         except Exception as e: return False, str(e)
 
+    def get_user_by_email(self, email):
+        """依 email 取用戶(不驗密碼)，供自動登入連結用。回傳同 verify_login 的 dict 或 None。"""
+        try:
+            df = self.get_df("users")
+            if df.empty: return None
+            u = df[df['email'].astype(str).str.strip().str.lower() == str(email).strip().lower()]
+            if u.empty: return None
+            r = u.iloc[0]
+            if str(r.get('active', 'Y')).strip().upper() == 'N':
+                return None   # 已離職帳號不給自動登入
+            return {"email": r['email'], "name": r['name'], "role": r['role'],
+                    "creator": r.get('creator_email', '')}
+        except Exception:
+            return None
+
+    def todo_ref_set(self, cand_email, event, todo_id, pm_email):
+        """記錄 (求職者,事件)→TodoId（同鍵覆寫）。需 PG。"""
+        b = self._pg()
+        if b is None: return
+        try:
+            b.exec('INSERT INTO todo_refs (cand_email,event,todo_id,pm_email) VALUES (%s,%s,%s,%s) '
+                   'ON CONFLICT (cand_email,event) DO UPDATE SET todo_id=EXCLUDED.todo_id, '
+                   'pm_email=EXCLUDED.pm_email, created_at=now()',
+                   (str(cand_email).strip(), event, int(todo_id), str(pm_email).strip()))
+        except Exception:
+            pass
+
+    def todo_ref_pop(self, cand_email, event):
+        """取出並刪除 (求職者,事件) 的 TodoId；無則回 None。需 PG。"""
+        b = self._pg()
+        if b is None: return None
+        try:
+            r = b.exec('SELECT todo_id FROM todo_refs WHERE cand_email=%s AND event=%s',
+                       (str(cand_email).strip(), event), fetch="one")
+            if not r: return None
+            b.exec('DELETE FROM todo_refs WHERE cand_email=%s AND event=%s',
+                   (str(cand_email).strip(), event))
+            return int(r[0])
+        except Exception:
+            return None
+
     def update_staff(self, email, name=None, emp_id=None, unit=None, password=None):
         """人員管理：更新 PM/admin 基本資料（不改 email 本身，email 為主鍵）。"""
         try:
@@ -745,6 +797,91 @@ def _ai_analyze_resume(row):
         return resp.content[0].text, None
     except Exception as e:
         return None, str(e)
+
+# --- 聯成電腦管理系統「待辦通知」API 串接 ---
+# Token 不落地：一律讀環境變數 TODO_API_TOKEN（未設 → 整個功能靜默略過，不影響其他流程）
+TODO_API_BASE = "https://lccnet-api2023-api.azurewebsites.net"
+
+def _todo_api_post(path, payload):
+    token = os.environ.get("TODO_API_TOKEN", "").strip()
+    if not token:
+        return None
+    try:
+        req = urllib.request.Request(
+            TODO_API_BASE + path, data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-type": "application/json", "Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None   # 網路/授權失敗都不可影響使用者操作
+
+def _emp_id_of(email):
+    """由 PM/admin email 取員工編號(數字字串)；查不到或非數字回 None。"""
+    try:
+        df = load_df("users")
+        if df.empty or 'emp_id' not in df.columns:
+            return None
+        u = df[df['email'].astype(str).str.strip().str.lower() == str(email).strip().lower()]
+        if u.empty:
+            return None
+        eid = str(u.iloc[0].get('emp_id', '') or '').strip()
+        return eid if eid.isdigit() else None
+    except Exception:
+        return None
+
+# ── 自動登入連結（HMAC 簽章 + 效期）：待辦通知的 Link 點了直接登入本系統 ──
+def _login_token(email):
+    secret = os.environ.get("AUTO_LOGIN_SECRET", "").strip()
+    if not secret:
+        return None
+    exp = int((datetime.now() + timedelta(days=14)).timestamp())
+    msg = f"{str(email).strip().lower()}|{exp}"
+    sig = hmac.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()[:32]
+    return base64.urlsafe_b64encode(f"{msg}|{sig}".encode()).decode()
+
+def _verify_login_token(token):
+    secret = os.environ.get("AUTO_LOGIN_SECRET", "").strip()
+    if not secret or not token:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(str(token).encode()).decode()
+        email, exp, sig = raw.rsplit("|", 2)
+        if int(exp) < int(datetime.now().timestamp()):
+            return None
+        good = hmac.new(secret.encode(), f"{email}|{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+        return email if hmac.compare_digest(good, sig) else None
+    except Exception:
+        return None
+
+def _login_link(email):
+    base = _secret("APP_URL", "email", "app_url",
+                   default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
+    t = _login_token(email)
+    if not t:
+        return base
+    return f"{base}{'&' if '?' in base else '?'}lt={t}"
+
+def _todo_notify(cand_email, pm_email, event, desc):
+    """建立待辦給 PM(Type=2 任務)並記 TodoId。PM 無員工編號或 API 未設定則靜默略過。"""
+    pm_email = str(pm_email or "").strip()
+    if not pm_email or '@' not in pm_email:
+        return
+    eid = _emp_id_of(pm_email)
+    if not eid:
+        return
+    _todo_cancel(cand_email, event)   # 先清同事件舊待辦，避免重複
+    r = _todo_api_post("/api/v1/Todo",
+                       {"UserId": int(eid), "Desc": str(desc)[:60], "Type": 2,
+                        "Link": _login_link(pm_email)})
+    if r and r.get("Success") and r.get("TodoId"):
+        sys.todo_ref_set(cand_email, event, int(r["TodoId"]), pm_email)
+
+def _todo_cancel(cand_email, event):
+    """取消 (求職者,事件) 對應的待辦（呼叫管理系統 Cancel API 並清對照）。"""
+    tid = sys.todo_ref_pop(cand_email, event)
+    if tid:
+        _todo_api_post("/api/v1/Todo/Cancel", {"TodoId": int(tid)})
 
 # --- Email ---
 def send_email(to_email, subject, body, html_body=None):
@@ -1371,7 +1508,8 @@ def admin_page():
                                         'interview_notes': int_note
                                     }
                                     sys.hr_update_status(row['email'], "Approved", details)
-                                    
+                                    _todo_cancel(row['email'], 'submit')
+
                                     _sign_url = _secret("APP_URL", "email", "app_url",
                                                         default="https://lcc-resume-sys-780693737981.asia-east1.run.app/")
                                     body = f"""
@@ -1420,6 +1558,7 @@ def admin_page():
                                 else:
                                     details = {'hr_comment': hr_comment}
                                     sys.hr_update_status(row['email'], "Returned", details)
+                                    _todo_cancel(row['email'], 'submit')
                                     _ok2, _err2 = send_email(row['email'], "【聯成電腦】履歷需修改", f"您的履歷被退回。\n原因：{hr_comment}\n請登入修改後重送。")
                                     if _ok2:
                                         st.warning("已退件通知")
@@ -2074,6 +2213,7 @@ def _render_fill(user, my_resume, status, r_type):
                 sys.save_resume(user['email'], form_data, "Submitted")
                 hr = user.get('creator', '')
                 if hr and '@' in str(hr): send_email(hr, f"履歷送審: {n_cn}", f"求職者 {n_cn} 已送出履歷，請登入系統審閱。")
+                _todo_notify(user['email'], hr, 'submit', f"履歷待審：{n_cn}")
                 st.success("已送出")
                 if _z_new and _z_new != _z_old:
                     st.info(f"ℹ️ 已依您填寫的生日 {dob}，自動更新星座為「{_z_new}」")
@@ -2179,13 +2319,14 @@ def _render_confirm(user, my_resume, status):
                 st.session_state['sig_verified'] = False
                 # 通知發送邀請的人資 PM/admin：該求職者已完成簽名
                 _hr = str(user.get('creator', '') or '').strip()
+                _nm = str(my_resume.get('name_cn', '') or user.get('name', '') or email)
                 if _hr and '@' in _hr:
-                    _nm = str(my_resume.get('name_cn', '') or user.get('name', '') or email)
                     send_email(_hr, f"【聯成電腦】{_nm} 已完成履歷簽名",
                                f"您好，\n\n求職者 {_nm}（{email}）已於 "
                                f"{datetime.now().strftime('%Y-%m-%d %H:%M')} 完成履歷親筆簽名。\n"
                                f"可登入系統至「履歷審核」下載含簽名的履歷 PDF。\n\n"
                                f"聯成電腦 人才招募系統")
+                _todo_notify(email, _hr, 'sign', f"履歷已簽名：{_nm}")
                 st.success("✅ 簽名已儲存，並自動套印至您的履歷 PDF。")
                 time.sleep(1); st.rerun()
             else:
@@ -2259,11 +2400,15 @@ def _render_docs(user, my_resume, status):
                 send_email(pm, f"【聯成電腦】到職文件已上傳：{nm}",
                            f"求職者 {nm}（{email}）已完成到職文件上傳並送出，\n"
                            f"請登入系統『到職文件管理』查閱。\n\n聯成電腦 招募系統")
+            _todo_notify(email, pm, 'docs', f"到職文件待審：{nm}")
             st.success("已送出並通知人資 PM。"); time.sleep(1); st.rerun()
 
 def _toggle_docs_enabled(email):
     """表單管理：勾選/取消『開放到職文件』→ 寫入 resumes.docs_enabled。"""
-    sys.set_docs_enabled(email, bool(st.session_state.get(f"docen_{email}", False)))
+    _on = bool(st.session_state.get(f"docen_{email}", False))
+    sys.set_docs_enabled(email, _on)
+    if _on:
+        _todo_cancel(email, 'sign')   # PM 已開啟到職文件 → 取消「已簽名」待辦
 
 def _render_docs_admin(user):
     """PM/admin：到職文件管理 — 查閱已上傳文件、發送補送通知。"""
@@ -2306,7 +2451,9 @@ def _render_docs_admin(user):
                             cc[2].download_button("下載", doc['data'], d['filename'],
                                                   doc['mime'] or "application/octet-stream", key=f"adl_{d['id']}")
                     elif cc[2].button("調閱", key=f"prep_{d['id']}"):
-                        st.session_state[f"want_doc_{d['id']}"] = True; st.rerun()
+                        st.session_state[f"want_doc_{d['id']}"] = True
+                        _todo_cancel(em, 'docs')   # PM 查閱到職文件 → 取消「到職文件待審」待辦
+                        st.rerun()
             st.divider()
             st.markdown("**📧 補送通知**")
             note = st.text_area("補送說明（將附於通知信）", key=f"docnote_{em}",
@@ -2343,6 +2490,19 @@ def candidate_page():
 
 # --- Entry ---
 if 'user' not in st.session_state: st.session_state.user = None
+
+# 自動登入：待辦通知連結帶 ?lt=<token>，驗證通過即免帳密直接登入
+if st.session_state.user is None:
+    _lt = st.query_params.get("lt")
+    if _lt:
+        _em = _verify_login_token(_lt)
+        _u = sys.get_user_by_email(_em) if _em else None
+        if _u:
+            st.session_state.user = _u
+            try: st.query_params.clear()   # 清掉網址上的 token
+            except Exception: pass
+            st.rerun()
+
 if st.session_state.user is None: login_page()
 else:
     if st.session_state.user['role'] in ['admin', 'pm']: admin_page()
