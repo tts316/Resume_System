@@ -50,6 +50,10 @@ SENDER_PASSWORD = ""
 # Logo URL
 LOGO_URL = "https://www.lccnet.com.tw/lccnet/img/nav-logo.png"
 
+# 應徵來源選單（管理系統對應圖二）
+SOURCE_OPTS = ["", "104", "Career", "1111", "yes123", "就業e網", "青年職場",
+               "徵才活動", "同仁介紹", "聯成官網", "518", "其他"]
+
 # 語言能力選單（全球前 15 大語言 + 在台常見）
 LANG_OPTS = ["", "英文", "日文", "韓文", "西班牙文", "法文", "德文", "越南文", "泰文",
              "印尼文", "馬來文", "俄文", "義大利文", "葡萄牙文", "阿拉伯文", "印地文"]
@@ -200,7 +204,7 @@ class PGBackend:
             except Exception: pass
         for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
                   "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level",
-                  "zodiac", "interview_unit", "mgmt_cand_no"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位/管理系統求職者編號欄自癒(冪等)
+                  "zodiac", "interview_unit", "mgmt_cand_no", "req_no", "online_interview"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位/管理系統求職者編號/需求單編號/線上面試欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
         for c, d in (("emp_id", "''"), ("unit", "''"), ("active", "'Y'")):   # 人員管理欄自癒(冪等)
@@ -402,7 +406,7 @@ class ResumeDB:
                 "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes",
                 "signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
                 "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level", "zodiac",
-                "interview_unit", "mgmt_cand_no"
+                "interview_unit", "mgmt_cand_no", "req_no", "online_interview"
             ],
             "system_settings": ["key", "value"]
         }
@@ -1381,6 +1385,10 @@ def admin_page():
     render_sidebar(user)
     st.header(f"👨‍💼 管理後台")
 
+    # 由待辦連結登入者：提示前往表單管理（Streamlit 無法程式化自動切分頁，故以醒目提示引導）
+    if st.session_state.pop('_landed_forms', False):
+        st.success("✅ 已為您登入並取消該筆待辦。請點選下方「📊 表單管理」分頁處理新進求職者。")
+
     tabs = ["📧 發送邀請", "📋 履歷審核", "📊 表單管理", "📁 到職文件管理"]
     if user['role'] == 'admin': tabs += ["⚙️ 設定", "👥 人員管理"]
     current_tab = st.tabs(tabs)
@@ -1886,6 +1894,27 @@ def _render_todo_admin():
             if xtok.strip(): sys.set_setting("todo_cancel_token", xtok.strip())
             st.success("已儲存待辦 API 設定"); time.sleep(1); st.rerun()
 
+    st.divider()
+    st.subheader("🔑 新增求職者 API（供管理系統打入）")
+    st.caption("供聯成電腦管理系統呼叫『新增求職者 API』所用的存取 Token。"
+               "管理系統呼叫時需帶 `Authorization: Bearer <此 Token>`。留空＝不變更。")
+    _in_set = bool(str(sys.get_setting("inbound_api_token") or "").strip())
+    with st.form("inbound_api_form"):
+        st.caption(f"目前 Token：{'🟢 已設定' if _in_set else '🔴 未設定'}")
+        _intok = st.text_input("新增求職者 API Token（留空＝不變更）", type="password", key="inbound_tok")
+        if st.form_submit_button("💾 儲存 / 產生"):
+            if _intok.strip():
+                sys.set_setting("inbound_api_token", _intok.strip())
+                st.success("已儲存"); time.sleep(1); st.rerun()
+            else:
+                st.info("未輸入新值，維持原設定不變。")
+        if st.form_submit_button("🎲 自動產生一組新 Token"):
+            _new = base64.urlsafe_b64encode(hashlib.sha256(
+                f"{datetime.now().isoformat()}".encode()).digest()).decode().rstrip("=")
+            sys.set_setting("inbound_api_token", _new)
+            st.success("已產生新 Token。請至下方複製並交給管理系統（僅顯示這一次）。")
+            st.code(_new, language=None)
+
 def _render_staff_admin(user):
     """admin：人員管理 — 維護 PM/admin 資料、PM 離職與交接。"""
     st.subheader("👥 人員管理")
@@ -2208,7 +2237,10 @@ def _render_fill(user, my_resume, status, r_type):
 
         with st.container(border=True):
             st.caption("其他資訊")
-            st.text_input("應徵管道", value=my_resume.get('source',''), key='source')
+            _src_val = str(my_resume.get('source', '') or '')
+            _src_opts = SOURCE_OPTS if _src_val in SOURCE_OPTS else SOURCE_OPTS + [_src_val]
+            st.selectbox("應徵管道", _src_opts,
+                         index=_src_opts.index(_src_val) if _src_val in _src_opts else 0, key='source')
             st.text_input("任職親友", value=my_resume.get('relative_name',''), key='relative_name')
             def get_idx01(v): return 0 if v != "有" else 1
             st.radio("補教經驗", ["無", "有"], index=get_idx01(my_resume.get('teach_exp')), horizontal=True, key='teach_exp')
@@ -2631,6 +2663,7 @@ def candidate_page():
 if 'user' not in st.session_state: st.session_state.user = None
 
 # 自動登入：待辦通知連結帶 ?lt=<token>，驗證通過即免帳密直接登入
+# 新增求職者待辦連結另帶 &ci=<求職者email>：到站後自動取消該筆「invite」待辦、並提示前往表單管理
 if st.session_state.user is None:
     _lt = st.query_params.get("lt")
     if _lt:
@@ -2638,7 +2671,11 @@ if st.session_state.user is None:
         _u = sys.get_user_by_email(_em) if _em else None
         if _u:
             st.session_state.user = _u
-            try: st.query_params.clear()   # 清掉網址上的 token
+            _ci = st.query_params.get("ci")
+            if _ci:
+                _todo_cancel(_ci, 'invite')            # 登入該頁即自動取消該筆待辦
+                st.session_state['_landed_forms'] = True
+            try: st.query_params.clear()               # 清掉網址上的 token
             except Exception: pass
             st.rerun()
 
