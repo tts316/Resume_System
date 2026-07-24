@@ -1696,20 +1696,21 @@ def admin_page():
                     except: mlabel = ym
                     is_first = (ym == merged2['ym'].iloc[0])
                     with st.expander(f"📅 {mlabel}（共 {len(grp)} 筆）", expanded=is_first):
-                        # 表頭
-                        hc = st.columns([0.8, 2, 2, 2, 2, 2, 2])
-                        for h, t in zip(hc, ["選取", "發送日期", "求職者姓名", "面試單位", "狀態", "操作", "匯入系統"]):
+                        # 表頭（欄寬比例依內容調整：狀態/操作內容較多故加寬）
+                        _col_ratio = [0.6, 1, 1.6, 1.8, 1.8, 2.2]
+                        hc = st.columns(_col_ratio)
+                        for h, t in zip(hc, ["選取", "發送日期", "求職者", "面試單位", "狀態", "操作"]):
                             h.markdown(f"**{t}**")
                         st.divider()
 
                         for _row_idx, fr in grp.iterrows():
                             raw_st  = str(fr.get('status', 'New'))
                             lbl, badge = STATUS_MAP.get(raw_st, (raw_st, "❓"))
-                            sent_date = fr['created_at'].strftime('%Y/%m/%d') if pd.notna(fr['created_at']) else '—'
+                            sent_date = fr['created_at'].strftime('%m/%d') if pd.notna(fr['created_at']) else '—'
                             cand_email = str(fr['email']).strip()
                             cand_name  = str(fr.get('name_cn', fr['name'])).strip()
 
-                            rc = st.columns([0.8, 2, 2, 2, 2, 2, 2])
+                            rc = st.columns(_col_ratio)
                             # 勾選：僅「未開放到職文件」(docs_enabled != Y) 可刪
                             _locked = str(fr.get('docs_enabled', '')).strip().upper() == 'Y'
                             if not _locked:
@@ -1779,23 +1780,19 @@ def admin_page():
                                     ok, _ = send_email(cand_email, "【聯成電腦】提醒您上傳到職文件", body)
                                     if ok: st.toast(f"已發送上傳提醒給 {cand_name}", icon="✅")
                                     else:  st.toast("發送失敗，請確認 Email 設定", icon="⚠️")
-                                # 匯入系統欄（rc[6]）：僅在「已開放到職文件」時出現求職者編號輸入框 + 按鈕
+                                # 匯入系統：收進每列展開區，僅「已開放到職文件」時出現
                                 if _den:
-                                    _cur_no = str(fr.get('mgmt_cand_no', '') or '')
-                                    _no = rc[6].text_input("求職者編號（管理系統查詢）", value=_cur_no,
-                                                           key=f"mgmtno_{cand_email}_{_row_idx}",
-                                                           placeholder="輸入編號")
-                                    if rc[6].button("📥 匯入管理系統", key=f"mgmtimp_{cand_email}_{_row_idx}"):
-                                        if not str(_no).strip():
-                                            st.toast("請先輸入求職者編號", icon="⚠️")
-                                        else:
-                                            _ok, _msg = _mgmt_import(cand_email, _no)
-                                            st.toast(_msg, icon="✅" if _ok else "⚠️")
-                                else:
-                                    rc[6].write("—")
-                            else:
-                                rc[5].write("—")
-                                rc[6].write("—")
+                                    with st.expander(f"📥 匯入系統 — {cand_name}"):
+                                        _cur_no = str(fr.get('mgmt_cand_no', '') or '')
+                                        _no = st.text_input("求職者編號（管理系統查詢）", value=_cur_no,
+                                                            key=f"mgmtno_{cand_email}_{_row_idx}",
+                                                            placeholder="輸入編號")
+                                        if st.button("📥 匯入管理系統", key=f"mgmtimp_{cand_email}_{_row_idx}"):
+                                            if not str(_no).strip():
+                                                st.toast("請先輸入求職者編號", icon="⚠️")
+                                            else:
+                                                _ok, _msg = _mgmt_import(cand_email, _no)
+                                                st.toast(_msg, icon="✅" if _ok else "⚠️")
 
                 # ── 刪除求職者帳號（勾選 → 確認 → 摘要）──────────────
                 st.divider()
