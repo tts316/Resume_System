@@ -126,8 +126,9 @@ def healthz():
 
 @app.post("/api/v1/candidate")
 def create_candidate(payload: Candidate, authorization: str = Header(default="")):
-    conn = _db()
+    conn = None
     try:
+        conn = _db()
         cur = conn.cursor()
         token = _get_setting(cur, "inbound_api_token")
         if not str(token or "").strip():
@@ -211,4 +212,6 @@ def create_candidate(payload: Candidate, authorization: str = Header(default="")
     except Exception as e:
         return {"Success": False, "Desc": str(e)}
     finally:
-        conn.close()
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
