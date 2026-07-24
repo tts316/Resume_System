@@ -7,17 +7,30 @@
 
 先把本 `api/` 目錄上傳到 Cloud Shell（或 clone repo 後 `cd api`），再執行：
 
+> ⚠️ **正式 DB 位置**：正式站 `lcc-resume-sys` 實際連的是 **KPI 個體 `lcc-kpi-sys:asia-east1:lcc-kpi-pg` 內的 `resume` 資料庫**（非獨立的 `resume-pg`；履歷 DB 已併入 KPI 個體）。API 服務必須連同一處，設定如下（皆已對齊主站）。
+
 ```bash
 gcloud config set project procuresys-499802
+
+# 跨專案引用 KPI 專案的 secret 需專案號
+KPI_NUM=$(gcloud projects describe lcc-kpi-sys --format="value(projectNumber)")
+
+# 授權 compute SA 讀取該 secret（在 lcc-kpi-sys 專案）
+gcloud secrets add-iam-policy-binding kpi-pg-resume-app-password \
+  --project=lcc-kpi-sys \
+  --member="serviceAccount:780693737981-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
 
 gcloud run deploy lcc-resume-api \
   --source . \
   --region asia-east1 \
   --allow-unauthenticated \
-  --add-cloudsql-instances procuresys-499802:asia-east1:resume-pg \
-  --set-env-vars PG_CONNECTION_NAME=procuresys-499802:asia-east1:resume-pg,PG_DB=resume,PG_USER=resume_app,APP_URL=https://lcc-resume-sys-780693737981.asia-east1.run.app/ \
-  --set-secrets PG_PASSWORD=resume-pg-app-password:latest
+  --set-cloudsql-instances lcc-kpi-sys:asia-east1:lcc-kpi-pg \
+  --set-env-vars PG_CONNECTION_NAME=lcc-kpi-sys:asia-east1:lcc-kpi-pg,PG_DB=resume,PG_USER=resume_app,APP_URL=https://lcc-resume-sys-780693737981.asia-east1.run.app/ \
+  --set-secrets PG_PASSWORD=projects/${KPI_NUM}/secrets/kpi-pg-resume-app-password:latest
 ```
+
+部署後網址：`https://lcc-resume-api-780693737981.asia-east1.run.app`（端點 `POST /api/v1/candidate`）。
 
 接著補上 email 與自動登入密鑰（與主站相同值）：
 
