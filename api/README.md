@@ -32,6 +32,22 @@ gcloud run deploy lcc-resume-api \
 
 部署後網址：`https://lcc-resume-api-780693737981.asia-east1.run.app`（端點 `POST /api/v1/candidate`）。
 
+### 之後只改程式碼的重新部署（保留既有設定）
+```bash
+cd ~/Resume_System && git pull && cd api
+gcloud run deploy lcc-resume-api --source . --region asia-east1
+```
+> ⚠️ 純改程式時**不要**再帶 `--set-env-vars`／`--set-secrets`——`--set-*` 會「整組覆蓋」而把 `EMAIL_SENDER`/`EMAIL_PASSWORD`/`AUTO_LOGIN_SECRET` 洗掉。不帶任何 env/secret 旗標時，`gcloud run deploy` 會**保留**現有 env、secret、cloudsql 掛載，只更新程式映像。若真要改某個 env，用 `--update-env-vars`（只更新指定的、不動其他）。
+
+### email 與自動登入密鑰（首次部署後補、與主站相同）
+```bash
+ES=$(gcloud run services describe lcc-resume-sys --region asia-east1 --format=json | jq -r '.spec.template.spec.containers[0].env[]?|select(.name=="EMAIL_SENDER")|.value')
+EP=$(gcloud run services describe lcc-resume-sys --region asia-east1 --format=json | jq -r '.spec.template.spec.containers[0].env[]?|select(.name=="EMAIL_PASSWORD")|.value')
+AL=$(gcloud run services describe lcc-resume-sys --region asia-east1 --format=json | jq -r '.spec.template.spec.containers[0].env[]?|select(.name=="AUTO_LOGIN_SECRET")|.value')
+gcloud run services update lcc-resume-api --region asia-east1 \
+  --update-env-vars EMAIL_SENDER="$ES",EMAIL_PASSWORD="$EP",AUTO_LOGIN_SECRET="$AL"
+```
+
 接著補上 email 與自動登入密鑰（與主站相同值）：
 
 ```bash

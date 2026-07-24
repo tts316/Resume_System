@@ -204,7 +204,7 @@ class PGBackend:
             except Exception: pass
         for c in ("signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
                   "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level",
-                  "zodiac", "interview_unit", "mgmt_cand_no", "req_no", "online_interview"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位/管理系統求職者編號/需求單編號/線上面試欄自癒(冪等)
+                  "zodiac", "interview_unit", "mgmt_cand_no", "req_no", "online_interview", "cand_code"):   # 簽名/到職文件/求職條件/語言能力/星座/面試單位/管理系統求職者編號/需求單編號/線上面試/代號欄自癒(冪等)
             try: self.exec(f'ALTER TABLE "resumes" ADD COLUMN IF NOT EXISTS {c} TEXT NOT NULL DEFAULT \'\'')
             except Exception: pass
         for c, d in (("emp_id", "''"), ("unit", "''"), ("active", "'Y'")):   # 人員管理欄自癒(冪等)
@@ -406,7 +406,7 @@ class ResumeDB:
                 "interview_time", "interview_location", "interview_dept", "interview_manager", "interview_notes",
                 "signature", "signed_at", "docs_enabled", "docs_submitted_at", "top3_conditions",
                 "lang_1", "lang_1_level", "lang_2", "lang_2_level", "lang_3", "lang_3_level", "zodiac",
-                "interview_unit", "mgmt_cand_no", "req_no", "online_interview"
+                "interview_unit", "mgmt_cand_no", "req_no", "online_interview", "cand_code"
             ],
             "system_settings": ["key", "value"]
         }

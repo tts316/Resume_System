@@ -104,7 +104,8 @@ def _todo_create(cur, emp_id, desc, link):
 # ── 請求模型 ──────────────────────────────────────────────────────────
 class Candidate(BaseModel):
     EmpId: int
-    CandNo: str
+    CandNo: str                       # 代號（管理系統表單手動輸入）
+    CandId: Optional[str] = ""        # 求職者編號（管理系統新增完成後自動產生的 id）
     Name: str
     Email: str
     ReqNo: str
@@ -154,7 +155,10 @@ def create_candidate(payload: Candidate, authorization: str = Header(default="")
             "name_cn": payload.Name, "phone": payload.Mobile, "home_phone": payload.HomePhone,
             "edu_1_degree": payload.Education, "edu_1_school": payload.School, "edu_1_major": payload.Major,
             "source": payload.Source, "interview_manager": payload.Interviewer,
-            "interview_time": payload.InterviewTime, "mgmt_cand_no": payload.CandNo, "req_no": payload.ReqNo,
+            "interview_time": payload.InterviewTime,
+            "mgmt_cand_no": payload.CandId,   # 求職者編號(自動產生id) → 填入原手動輸入欄位
+            "cand_code": payload.CandNo,      # 代號
+            "req_no": payload.ReqNo,
             "online_interview": "是" if payload.OnlineInterview else "",
         }
         rmap = {k: str(v).strip() for k, v in rmap.items() if v is not None and str(v).strip() != ""}
